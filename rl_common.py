@@ -53,6 +53,12 @@ def add_env_args(p: argparse.ArgumentParser) -> None:
         "log-uniform; >1 concentrates switches earlier; 0<cdb<1 later.",
     )
     p.add_argument(
+        "--fixed-order",
+        action="store_true",
+        help="always start episodes with algo_a (A, B, A, ...); by default the "
+        "starting algorithm is drawn at random per episode",
+    )
+    p.add_argument(
         "--reward-mode",
         choices=["noswitch", "absolute", "relative", "mixed"],
         default="noswitch",
@@ -103,6 +109,7 @@ def build_envs(args) -> list[TranslationEnv]:
                 n_individuals_b=args.n_individuals_b,
                 reward_mode=args.reward_mode,
                 switch_cdb=args.switch_cdb,
+                random_start=not args.fixed_order,
                 seed=args.seed * 100 + dim,
             )
         )
