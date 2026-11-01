@@ -26,9 +26,6 @@ import os
 import numpy as np
 import torch
 
-from cat.rl.policy import ActorCritic
-from cat.rl.ppo import PPOConfig, train_ppo
-from cat.train_loop import resolve_device, translator_meta
 from cat.cli.common import (
     add_algo_args,
     add_env_args,
@@ -37,6 +34,9 @@ from cat.cli.common import (
     build_envs,
     build_logger,
 )
+from cat.rl.policy import ActorCritic
+from cat.rl.ppo import PPOConfig, train_ppo
+from cat.train_loop import resolve_device, translator_meta
 
 
 def parse_args():

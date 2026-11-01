@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Pre-commit hook: lint staged Python files with ruff before the commit lands.
+#
+# Tracked in-repo (not under .git/), so enable it once per clone with:
+#     git config core.hooksPath .githooks
+#
+# Runs the same `ruff check` the CI workflow does (.github/workflows/ci.yml),
+# over just the staged .py files. Bypass in a pinch with `git commit --no-verify`.
+set -euo pipefail
+
+# Staged, still-present Python files (Added/Copied/Modified; skips deletions),
+# NUL-delimited so paths with spaces survive.
+mapfile -d '' -t files < <(
+    git diff --cached --name-only --diff-filter=ACM -z -- '*.py'
+)
+
+if [ ${#files[@]} -eq 0 ]; then
+    exit 0  # nothing Python staged; let the commit through
+fi
+
+echo "pre-commit: ruff check (${#files[@]} staged file(s))"
+if ! uv run ruff check -- "${files[@]}"; then
+    echo
+    echo "pre-commit: ruff found issues. Fix them, or auto-fix with:"
+    echo "    uv run ruff check --fix ${files[*]}"
+    echo "(or commit with --no-verify to skip this hook)"
+    exit 1
+fi

@@ -42,7 +42,7 @@ class NormContext:
     val_std: Tensor  # (B,)
 
     @classmethod
-    def from_shared(cls, positions: Tensor, values: Tensor) -> "NormContext":
+    def from_shared(cls, positions: Tensor, values: Tensor) -> NormContext:
         # positions (B, N, D), values (B, N)
         center = positions.mean(dim=-2)  # (B, D)
         centered = positions - center.unsqueeze(-2)

@@ -220,4 +220,4 @@ def test_parameters_change_after_update():
         ),
     )
     after = list(ac.parameters())
-    assert any((a - b).abs().sum().item() > 0 for a, b in zip(after, before))
+    assert any((a - b).abs().sum().item() > 0 for a, b in zip(after, before, strict=True))

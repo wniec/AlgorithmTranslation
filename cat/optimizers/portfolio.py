@@ -5,9 +5,9 @@ Add new algorithm classes here and they become selectable by name in train_ppo.p
 ``cat/state/schema.py`` before it can participate in translation.
 """
 
-from cat.optimizers.PSO import SPSO, SPSOL, IPSO, CPSO
-from cat.optimizers.ES import CMAES
 from cat.optimizers.DE import MADDE
+from cat.optimizers.ES import CMAES
+from cat.optimizers.PSO import CPSO, IPSO, SPSO, SPSOL
 from cat.optimizers.TR import BOBYQA
 
 PORTFOLIO: dict = {

@@ -65,7 +65,7 @@ def test_madde_fixed_pop_archive_capacity():
     data = opt.get_data()
     assert len(data["x"]) == 12  # LPSR disabled in framework mode
     assert len(data["archive"]) <= round(ARATE * 12)
-    assert set(["x", "y", "archive", "m_f", "m_cr", "p_m"]).issubset(data)
+    assert {"x", "y", "archive", "m_f", "m_cr", "p_m"}.issubset(data)
 
 
 def test_madde_warmstart_from_shared_only():

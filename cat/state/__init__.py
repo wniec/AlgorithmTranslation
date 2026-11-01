@@ -1,11 +1,3 @@
-from cat.state.schema import (
-    Struct,
-    Constraint,
-    Field,
-    StateSpec,
-    SHARED_FIELDS,
-    get_spec,
-)
 from cat.state.canonical import (
     CanonicalState,
     augment_native,
@@ -15,19 +7,27 @@ from cat.state.canonical import (
     to_canonical,
     warm_start_optimizer,
 )
+from cat.state.schema import (
+    SHARED_FIELDS,
+    Constraint,
+    Field,
+    StateSpec,
+    Struct,
+    get_spec,
+)
 
 __all__ = [
-    "Struct",
+    "SHARED_FIELDS",
+    "CanonicalState",
     "Constraint",
     "Field",
     "StateSpec",
-    "SHARED_FIELDS",
-    "get_spec",
-    "CanonicalState",
-    "to_canonical",
-    "from_canonical",
-    "warm_start_optimizer",
+    "Struct",
     "augment_native",
-    "has_full_state",
     "collate",
+    "from_canonical",
+    "get_spec",
+    "has_full_state",
+    "to_canonical",
+    "warm_start_optimizer",
 ]

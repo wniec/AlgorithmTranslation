@@ -14,7 +14,8 @@ import time
 from typing import Any
 
 import numpy as np
-from pypop7.optimizers.core import Optimizer as _Pypop7Base, Terminations
+from pypop7.optimizers.core import Optimizer as _Pypop7Base
+from pypop7.optimizers.core import Terminations
 
 
 class SubOptimizer(_Pypop7Base):

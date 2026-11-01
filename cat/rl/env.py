@@ -14,7 +14,7 @@ the next segment.
   side-input to the critic.
 * **action** — the target's full native warm-start dict (shared population +
   decoded specific fields), assembled by the policy from its decoded state.
-* **reward** — every mode is ``log_scale(translated improvement) −
+* **reward** — every mode is ``log_scale(translated improvement) -
   log_scale(baseline improvement)``, differing only in the baseline:
     - ``absolute``: baseline 0 — log-scaled best-so-far improvement over the
       segment.
@@ -52,6 +52,7 @@ objects), not by a generic flat-vector agent.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import ClassVar
 
 import gymnasium as gym
 import numpy as np
@@ -60,8 +61,8 @@ from gymnasium import spaces
 from cat.optimizers.base import sample_switch_points
 from cat.optimizers.portfolio import PORTFOLIO
 from cat.rl.reward import (  # re-exported for back-compat (tests import these here)
-    _log_scale,
     _REWARD_EPS,
+    _log_scale,
     log_scaled_improvement,
     run_term,
     scaled_improvement,
@@ -70,16 +71,16 @@ from cat.state.canonical import augment_native, has_full_state, warm_start_optim
 from cat.suite.ela import ELA_DIM, MAX_HISTORY_SAMPLE, compute_ela_features
 
 __all__ = [
-    "TranslationEnv",
-    "scaled_improvement",
-    "log_scaled_improvement",
-    "_log_scale",
     "_REWARD_EPS",
+    "TranslationEnv",
+    "_log_scale",
+    "log_scaled_improvement",
+    "scaled_improvement",
 ]
 
 
 class TranslationEnv(gym.Env):
-    metadata = {"render_modes": []}
+    metadata: ClassVar[dict] = {"render_modes": []}
 
     def __init__(
         self,
@@ -185,7 +186,7 @@ class TranslationEnv(gym.Env):
 
     # Base reward modes and the composite aliases that expand into them.
     _BASE_REWARD_MODES = ("absolute", "noswitch", "relative", "coldtarget")
-    _REWARD_ALIASES = {"mixed": ["noswitch", "relative"]}
+    _REWARD_ALIASES: ClassVar[dict] = {"mixed": ["noswitch", "relative"]}
 
     @classmethod
     def _normalize_reward_modes(cls, reward_mode) -> list[str]:
@@ -479,9 +480,13 @@ class TranslationEnv(gym.Env):
         if mode == "noswitch":
             return translated_term - self._noswitch_term(target_fe, seg_seed, prev_best, rng)
         if mode == "relative":
-            return translated_term - self._relative_term(target, target_fe, seg_seed, prev_best, rng)
+            return translated_term - self._relative_term(
+                target, target_fe, seg_seed, prev_best, rng
+            )
         if mode == "coldtarget":
-            return translated_term - self._coldtarget_term(target, target_fe, seg_seed, prev_best, rng)
+            return translated_term - self._coldtarget_term(
+                target, target_fe, seg_seed, prev_best, rng
+            )
         raise ValueError(f"unknown reward component {mode!r}")
 
     def _run_term(self, result: dict, prev_best: float, rng: float) -> float:

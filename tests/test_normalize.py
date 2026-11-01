@@ -3,7 +3,7 @@
 import numpy as np
 import torch
 
-from cat.models.norm import NormContext, _CLIP
+from cat.models.norm import _CLIP, NormContext
 from cat.rl.env import TranslationEnv
 from cat.rl.normalize import RunningMeanStd
 from cat.rl.policy import ActorCritic

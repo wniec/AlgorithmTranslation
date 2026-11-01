@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import torch
 
-from cat.state import to_canonical, from_canonical, get_spec
+from cat.state import from_canonical, get_spec, to_canonical
 from cat.state.canonical import resample_population
 from cat.state.schema import Struct
 

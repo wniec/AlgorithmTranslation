@@ -12,7 +12,6 @@ from cat.models import NormContext, TranslatorPair
 from cat.optimizers.portfolio import PORTFOLIO
 from cat.state import from_canonical, get_spec, to_canonical
 from cat.state.canonical import CanonicalState, warm_start_optimizer
-from cat.state.schema import Struct
 from cat.suite import IOHSuite
 
 

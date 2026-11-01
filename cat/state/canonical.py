@@ -46,7 +46,7 @@ class CanonicalState:
     def device(self) -> torch.device:
         return self.positions.device
 
-    def to(self, device) -> "CanonicalState":
+    def to(self, device) -> CanonicalState:
         return CanonicalState(
             algo=self.algo,
             positions=self.positions.to(device),
@@ -56,7 +56,7 @@ class CanonicalState:
             specific={k: v.to(device) for k, v in self.specific.items()},
         )
 
-    def index(self, i: int) -> "CanonicalState":
+    def index(self, i: int) -> CanonicalState:
         """Select one sample from a batched state, returning an un-batched state."""
         return CanonicalState(
             algo=self.algo,
@@ -67,7 +67,7 @@ class CanonicalState:
             specific={k: v[i] for k, v in self.specific.items()},
         )
 
-    def detach_clone(self) -> "CanonicalState":
+    def detach_clone(self) -> CanonicalState:
         return CanonicalState(
             algo=self.algo,
             positions=self.positions.detach().clone(),

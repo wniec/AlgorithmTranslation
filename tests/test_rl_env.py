@@ -2,6 +2,8 @@
 rewards, and seed determinism. Driven with a trivial 'lossy' action (carry only
 the shared population) so no policy is needed."""
 
+import itertools
+
 import numpy as np
 
 from cat.rl.env import TranslationEnv, scaled_improvement
@@ -28,7 +30,7 @@ def _lossy_action(obs):
 
 
 def _run_episode(env):
-    obs, info = env.reset()
+    obs, _ = env.reset()
     rewards = []
     steps = 0
     done = False
@@ -36,7 +38,7 @@ def _run_episode(env):
         assert obs["source_algo"] in ("PSO", "CMAES")
         assert obs["target_algo"] != obs["source_algo"]
         assert obs["context"].shape == (2,)
-        obs, r, term, trunc, info = env.step(_lossy_action(obs))
+        obs, r, term, trunc, _info = env.step(_lossy_action(obs))
         rewards.append(r)
         steps += 1
         done = term or trunc
@@ -56,13 +58,13 @@ def test_targets_alternate():
     seq = [obs["target_algo"]]
     done = False
     while not done:
-        obs, r, term, trunc, _ = env.step(_lossy_action(obs))
+        obs, _r, term, trunc, _ = env.step(_lossy_action(obs))
         done = term or trunc
         if not done:
             seq.append(obs["target_algo"])
     # PSO warmup -> first target CMAES, then alternating.
     assert seq[0] == "CMAES"
-    assert all(a != b for a, b in zip(seq, seq[1:]))
+    assert all(a != b for a, b in itertools.pairwise(seq))
 
 
 def test_seed_determinism():
@@ -221,7 +223,7 @@ def test_mixed_reward_is_noswitch_plus_relative():
 
 
 def test_log_scaled_reward_properties():
-    from cat.rl.env import log_scaled_improvement, _log_scale
+    from cat.rl.env import _log_scale, log_scaled_improvement
 
     # no improvement -> 0; improvement -> positive and monotonic in improvement.
     assert log_scaled_improvement(5.0, 5.0, 4.0) == 0.0
@@ -274,7 +276,7 @@ def test_target_n_reflects_each_algos_own_population_size():
     obs, _ = env.reset()
     assert obs["source_algo"] == "PSO" and obs["target_algo"] == "CMAES"
     assert obs["target_n"] == 20
-    obs, r, term, trunc, _ = env.step(_lossy_action(obs))
+    obs, _r, _term, _trunc, _ = env.step(_lossy_action(obs))
     assert obs["target_algo"] == "PSO"
     assert obs["target_n"] == 8
 
@@ -313,7 +315,7 @@ def test_policy_action_native_matches_target_n():
     step = ac.act(obs)
     assert step.native["x"].shape[0] == obs["target_n"] == 20
 
-    obs, r, term, trunc, _ = env.step(step.native)
+    obs, _r, _term, _trunc, _ = env.step(step.native)
     assert obs["target_algo"] == "PSO"
     step2 = ac.act(obs)
     assert step2.native["x"].shape[0] == obs["target_n"] == 8
@@ -402,7 +404,7 @@ def test_ela_skipped_on_terminal_observation():
 
     env = _env_ela(n_switches=1)
     obs, _ = env.reset()
-    obs, r, term, trunc, _ = env.step(_lossy_action(obs))
+    obs, _r, term, _trunc, _ = env.step(_lossy_action(obs))
     assert term
     assert obs["context"].shape == (2 + ELA_DIM,)
     assert np.all(obs["context"][2:] == 0.0)

@@ -16,6 +16,7 @@ evaluation) and RL (sampled actions), with the heads' ``action_mean`` /
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 import numpy as np
 import torch
@@ -132,7 +133,7 @@ class ActorCritic(nn.Module):
     # Where the ``D`` (dimension-token) axis sits inside each segment's
     # per-sample shape, so a per-dimension std broadcasts onto it and over the
     # remaining (particle / rank / field) axes.
-    _D_AXIS = {"pd": 0, "cov_L": 0, "cov_d": 0, "ppd": 1, "set": 1}
+    _D_AXIS: ClassVar[dict] = {"pd": 0, "cov_L": 0, "cov_d": 0, "ppd": 1, "set": 1}
     _STD_DELTA = 1.0  # residual half-range in log-space: std in (e^-1, e^1)*base
 
     @staticmethod
@@ -144,7 +145,7 @@ class ActorCritic(nn.Module):
         view[d_axis] = D
         return v.reshape(B, *view).expand(B, *shape)
 
-    def action_std(self, target_algo: str, z: "Latent", n: int) -> Tensor:
+    def action_std(self, target_algo: str, z: Latent, n: int) -> Tensor:
         """Per-coordinate std, shape ``(B, action_dim(D, n))``.
 
         Each segment's std is its learnable base plus a bounded, population-

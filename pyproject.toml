@@ -23,6 +23,21 @@ train-td3 = "cat.cli.train_td3:main"
 eval = "cat.cli.evaluate:main"
 eval-switch = "cat.cli.evaluate_switcher:main"
 
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# A thorough set beyond ruff's minimal default (E4/E7/E9 + F): pycodestyle
+# (E/W), pyflakes (F), import sorting (I), bugbear (B), comprehensions (C4),
+# pyupgrade (UP), flake8-simplify (SIM), and ruff's own rules (RUF).
+select = ["E", "W", "F", "I", "B", "C4", "UP", "SIM", "RUF"]
+ignore = [
+    # `int(round(x))` is intentional: round() on a numpy scalar returns a numpy
+    # float, so the int() guarantees a Python int for use as a count/size.
+    "RUF046",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

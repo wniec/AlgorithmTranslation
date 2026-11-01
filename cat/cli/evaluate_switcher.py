@@ -70,7 +70,6 @@ from cat.suite.bbob_splits import (
 )
 from cat.train_loop import load_translator
 
-
 # --------------------------------------------------------------------------- #
 # optimizer plumbing                                                          #
 # --------------------------------------------------------------------------- #
@@ -396,10 +395,10 @@ def summarize(rows, args):
     budgets = np.array([r["budget"] for r in rows], dtype=float)
 
     # Primary metric: mean rank by AOCC (higher AOCC = better -> rank on -aocc).
-    rank_sums = {m: 0.0 for m in methods}
+    rank_sums = dict.fromkeys(methods, 0.0)
     for idx in range(n):
         ranks = _avg_ranks([-rows[idx][m]["aocc"] for m in methods])
-        for m, rk in zip(methods, ranks):
+        for m, rk in zip(methods, ranks, strict=True):
             rank_sums[m] += rk
     mean_rank = {m: rank_sums[m] / n for m in methods}
 
@@ -457,10 +456,14 @@ def summarize(rows, args):
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("algo_a", choices=sorted(PORTFOLIO))
     p.add_argument("algo_b", choices=sorted(PORTFOLIO))
-    p.add_argument("--model", default=None, help="translator checkpoint (default models/<A>_<B>.pt)")
+    p.add_argument(
+        "--model", default=None, help="translator checkpoint (default models/<A>_<B>.pt)"
+    )
     p.add_argument("-d", "--dims", type=int, nargs="+", default=[2, 3, 5],
                    help=f"BBOB dimensions (available: {ALL_DIMS})")
     p.add_argument("--instances", type=int, nargs="+", default=None,

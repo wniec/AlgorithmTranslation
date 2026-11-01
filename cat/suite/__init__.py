@@ -1,20 +1,20 @@
-from cat.suite.ioh_suite import IOHSuite, IOHProblemWrapper
 from cat.suite.bbob_splits import (
     ALL_DIMS,
     ALL_FUNCTIONS,
-    INSTANCE_IDS,
     EASY_TRAIN_FUNCTIONS,
+    INSTANCE_IDS,
     build_problem_ids,
     get_train_test_split,
 )
+from cat.suite.ioh_suite import IOHProblemWrapper, IOHSuite
 
 __all__ = [
-    "IOHSuite",
-    "IOHProblemWrapper",
     "ALL_DIMS",
     "ALL_FUNCTIONS",
-    "INSTANCE_IDS",
     "EASY_TRAIN_FUNCTIONS",
+    "INSTANCE_IDS",
+    "IOHProblemWrapper",
+    "IOHSuite",
     "build_problem_ids",
     "get_train_test_split",
 ]

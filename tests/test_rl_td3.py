@@ -174,8 +174,8 @@ def test_parameters_change_after_update():
     )
     after_a = list(actor.parameters())
     after_c = list(critic.parameters())
-    assert any((a - b).abs().sum().item() > 0 for a, b in zip(after_a, before_a))
-    assert any((a - b).abs().sum().item() > 0 for a, b in zip(after_c, before_c))
+    assert any((a - b).abs().sum().item() > 0 for a, b in zip(after_a, before_a, strict=True))
+    assert any((a - b).abs().sum().item() > 0 for a, b in zip(after_c, before_c, strict=True))
 
 
 def test_polyak_update_moves_target_toward_online():
