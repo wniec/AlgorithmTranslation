@@ -15,7 +15,7 @@ normalization context) and emits that algorithm's specific fields in raw units:
 The head also exposes an **action interface** for the RL trainer:
 ``action_mean`` returns the flat normalized coordinates an RL policy puts a
 Gaussian over, and ``build_state`` rebuilds the raw fields from (possibly
-noised) coordinates. The supervised ``forward`` is exactly
+noised) coordinates. The deterministic ``forward`` is exactly
 ``build_state(action_mean(...))``, so both paths share one network.
 """
 

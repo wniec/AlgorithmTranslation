@@ -8,9 +8,9 @@ stochastic policy; the covariance action is sampled in factor space so it stays
 PSD. The **critic** is a small MLP on the
 encoder's global latent plus the env context vector.
 
-The same network thus serves supervised translation (deterministic mean) and RL
-(sampled actions), with the heads' ``action_mean`` / ``build_state`` interface
-(cat/models/heads.py) doing the packing.
+The same network thus serves deterministic translation (the mean, used at
+evaluation) and RL (sampled actions), with the heads' ``action_mean`` /
+``build_state`` interface (cat/models/heads.py) doing the packing.
 """
 
 from __future__ import annotations
@@ -22,13 +22,13 @@ import torch
 from torch import Tensor, nn
 from torch.distributions import Normal
 
-from cat.data.dataset import collate
 from cat.models.encoder import Latent, StateEncoder
 from cat.models.layers import MLP
 from cat.models.norm import NormContext
 from cat.models.translator import TranslatorPair
 from cat.state.canonical import (
     CanonicalState,
+    collate,
     from_canonical,
     resample_population,
     to_canonical,

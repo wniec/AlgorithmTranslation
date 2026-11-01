@@ -109,11 +109,11 @@ def test_bobyqa_warmstart_uses_translated_model():
 
 
 def test_bobyqa_has_full_state():
-    from cat.data.collector import _has_full_state
+    from cat.state.canonical import has_full_state
 
     _, opt = _make("bbob_f001_i01_d05", target_fe=800, n_individuals=12)
     opt.optimize()
-    assert _has_full_state("BOBYQA", _augment(opt, 5))
+    assert has_full_state("BOBYQA", _augment(opt, 5))
 
 
 def test_bobyqa_canonical_shapes_and_roundtrip():

@@ -1,14 +1,14 @@
-"""Training orchestration for the bidirectional state translator."""
+"""Shared helpers for building and (de)serializing the state translator.
+
+The translator is trained by the RL trainers (``train_ppo.py`` / ``train_td3.py``);
+this module holds the device resolution and checkpoint round-tripping they and
+``evaluate.py`` share.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-
 import torch
 
-from cat.data.dataset import StateDataset
-from cat.losses import batch_losses
-from cat.models.norm import NormContext
 from cat.models.translator import TranslatorPair
 
 
@@ -28,80 +28,6 @@ def resolve_device(name: str = "auto") -> str:
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
-@dataclass
-class TrainConfig:
-    epochs: int = 20
-    batch_size: int = 32
-    lr: float = 1e-3
-    w_cycle: float = 1.0
-    w_recon: float = 1.0
-    w_utility: float = 0.1
-    cycle_mode: str = "field"  # "field" (decoded fields) or "latent" (re-encoded latents)
-    device: str = "cpu"
-    seed: int = 42
-    log_every: int = 1
-
-
-@dataclass
-class TrainLog:
-    history: list[dict] = field(default_factory=list)
-
-
-def _ctx(state):
-    return NormContext.from_shared(state.positions, state.values)
-
-
-def train(
-    pair: TranslatorPair, dataset: StateDataset, cfg: TrainConfig, log_fn=None
-) -> TrainLog:
-    """Train the translator. ``log_fn(row)`` is called once per epoch with the
-    metric dict (used for Weights & Biases logging; optional)."""
-    device = torch.device(cfg.device)
-    pair.to(device)
-    opt = torch.optim.Adam(pair.parameters(), lr=cfg.lr)
-    gen = torch.Generator().manual_seed(cfg.seed)
-    log = TrainLog()
-
-    for epoch in range(cfg.epochs):
-        pair.train()
-        sums = {"cycle": 0.0, "recon": 0.0, "utility": 0.0, "total": 0.0}
-        n_batches = 0
-        for state in dataset.iter_batches(cfg.batch_size, generator=gen):
-            state = state.to(device)
-            ctx = _ctx(state)
-            losses = batch_losses(
-                pair, state, ctx, cycle_mode=cfg.cycle_mode, w_cycle=cfg.w_cycle
-            )
-            total = (
-                cfg.w_cycle * losses["cycle"]
-                + cfg.w_recon * losses["recon"]
-                + cfg.w_utility * losses["utility"]
-            )
-            opt.zero_grad()
-            total.backward()
-            torch.nn.utils.clip_grad_norm_(pair.parameters(), 5.0)
-            opt.step()
-
-            for k in ("cycle", "recon", "utility"):
-                sums[k] += float(losses[k].detach())
-            sums["total"] += float(total.detach())
-            n_batches += 1
-
-        n_batches = max(n_batches, 1)
-        row = {k: v / n_batches for k, v in sums.items()}
-        row["epoch"] = epoch
-        log.history.append(row)
-        if log_fn is not None:
-            log_fn(row)
-        if cfg.log_every and epoch % cfg.log_every == 0:
-            print(
-                f"epoch {epoch:3d} | total {row['total']:.4f} "
-                f"| cycle {row['cycle']:.4f} | recon {row['recon']:.4f} "
-                f"| utility {row['utility']:.4f}"
-            )
-    return log
-
-
 def translator_meta(pair: TranslatorPair) -> dict:
     """Architecture hyperparameters needed to rebuild a TranslatorPair."""
     enc = pair.encoders[pair.algo_a]
@@ -115,15 +41,11 @@ def translator_meta(pair: TranslatorPair) -> dict:
     }
 
 
-def save_translator(pair: TranslatorPair, path: str, cfg: TrainConfig) -> None:
-    torch.save({"state_dict": pair.state_dict(), **translator_meta(pair)}, path)
-
-
 def load_translator(path: str, device="cpu") -> TranslatorPair:
-    """Rebuild a TranslatorPair from a supervised or RL checkpoint.
+    """Rebuild a TranslatorPair from an RL checkpoint.
 
-    RL checkpoints (train_ppo.py, train_td3.py) store the actor's TranslatorPair
-    under the same ``state_dict`` key, so this loads all three transparently.
+    The RL trainers (train_ppo.py, train_td3.py) store the actor's TranslatorPair
+    under the ``state_dict`` key, so this loads either transparently.
     """
     ckpt = torch.load(path, map_location=device, weights_only=False)
     pair = TranslatorPair(

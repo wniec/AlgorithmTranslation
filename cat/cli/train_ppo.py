@@ -8,12 +8,12 @@ translator) maps the source optimizer's internal state into the target's. The
 reward is the true downstream best-so-far improvement over the next segment, and
 the A->B->A cycle drift enters as a differentiable penalty — so the network
 learns hand-offs that are both *useful* and *reversible*, optimizing the real
-(non-differentiable) objective rather than the supervised proxy in train.py.
+(non-differentiable) objective directly.
 
 PPO's action is a stochastic Gaussian over the translator's decoded fields,
 trained on-policy. See train_td3.py for an off-policy alternative that trains
 the same continuous action deterministically with twin critics + a replay
-buffer; shared CLI/env-building logic lives in rl_common.py.
+buffer; shared CLI/env-building logic lives in cat/cli/common.py.
 
 Saves a checkpoint compatible with evaluate.py (`models/<A>_<B>_ppo.pt`).
 """
@@ -29,7 +29,7 @@ import torch
 from cat.rl.policy import ActorCritic
 from cat.rl.ppo import PPOConfig, train_ppo
 from cat.train_loop import resolve_device, translator_meta
-from rl_common import (
+from cat.cli.common import (
     add_algo_args,
     add_env_args,
     add_logging_args,

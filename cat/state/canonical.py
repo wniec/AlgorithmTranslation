@@ -89,13 +89,35 @@ def _as_tensor(x, device, dtype=torch.float32) -> Tensor:
 # --------------------------------------------------------------------------- #
 
 
+def augment_native(opt, dim: int) -> dict:
+    """Snapshot an optimizer's native warm-start dict, plus the attributes
+    canonical conversion needs (``sigma``, ``best_x`` / ``best_y``). The result
+    is exactly the ``native`` dict ``to_canonical`` consumes."""
+    native = {
+        k: (np.copy(v) if isinstance(v, np.ndarray) else v)
+        for k, v in opt.get_data().items()
+        if v is not None
+    }
+    native["sigma"] = getattr(opt, "sigma", None)
+    native["best_x"] = (
+        np.copy(opt.best_so_far_x) if opt.best_so_far_x is not None else np.zeros(dim)
+    )
+    native["best_y"] = float(opt.best_so_far_y)
+    return native
+
+
+def has_full_state(algo: str, native: dict) -> bool:
+    """A state is usable only if every native key the spec needs is present."""
+    required = ["x", "y"] + [f.native_key for f in get_spec(algo).specific]
+    return all(native.get(k) is not None for k in required)
+
+
 def to_canonical(algo: str, native: dict, device="cpu") -> CanonicalState:
     """Build a ``CanonicalState`` from an augmented native warm-start dict.
 
     ``native`` must contain the shared keys (``x``, ``y``, ``best_x``,
     ``best_y``) plus the optimizer's specific native keys (e.g. ``v`` / ``cm`` /
-    ``sigma``). The collector produces exactly such a dict (see
-    ``cat/data/collector.py``).
+    ``sigma``). ``augment_native`` produces exactly such a dict.
     """
     spec = get_spec(algo)
 
@@ -283,3 +305,22 @@ def warm_start_optimizer(opt, native: dict) -> None:
     opt.set_data(**native)
     if native.get("sigma") is not None and hasattr(opt, "sigma"):
         opt.sigma = float(native["sigma"])
+
+
+def collate(states: list[CanonicalState]) -> CanonicalState:
+    """Stack single states (same algo, D, N) into one batched CanonicalState.
+
+    Different problem dimension ``D`` or population size ``N`` cannot be stacked
+    into one tensor, so all ``states`` must share ``(algo, D, N)``.
+    """
+    algo = states[0].algo
+    return CanonicalState(
+        algo=algo,
+        positions=torch.stack([s.positions for s in states]),
+        values=torch.stack([s.values for s in states]),
+        best_x=torch.stack([s.best_x for s in states]),
+        best_y=torch.stack([s.best_y for s in states]),
+        specific={
+            k: torch.stack([s.specific[k] for s in states]) for k in states[0].specific
+        },
+    )

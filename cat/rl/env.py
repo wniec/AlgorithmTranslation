@@ -57,36 +57,25 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from cat.data.collector import _augment, _has_full_state
 from cat.optimizers.base import sample_switch_points
 from cat.optimizers.portfolio import PORTFOLIO
-from cat.state.canonical import warm_start_optimizer
+from cat.rl.reward import (  # re-exported for back-compat (tests import these here)
+    _log_scale,
+    _REWARD_EPS,
+    log_scaled_improvement,
+    run_term,
+    scaled_improvement,
+)
+from cat.state.canonical import augment_native, has_full_state, warm_start_optimizer
 from cat.suite.ela import ELA_DIM, MAX_HISTORY_SAMPLE, compute_ela_features
 
-
-# Log-scaling floor. reward = log(scaled + eps) - log(eps) = log(1 + scaled/eps)
-# maps a [0, 1] scaled improvement to [0, log(1 + 1/eps)] (~6.9 for eps=1e-3),
-# with 0 improvement -> 0. Log scaling emphasizes the small improvements that
-# dominate late-stage refinement near the optimum.
-_REWARD_EPS = 1e-4
-
-
-def scaled_improvement(prev_best: float, new_best: float, rng_range: float) -> float:
-    """Best-so-far improvement over a segment, scaled to [0, 1]."""
-    improvement = max(0.0, prev_best - new_best)
-    return float(np.clip(improvement / max(rng_range, 1e-12), 0.0, 1.0))
-
-
-def _log_scale(scaled: float) -> float:
-    """Map a [0, 1] scaled improvement through a log transform (0 -> 0)."""
-    return float(np.log(scaled + _REWARD_EPS) - np.log(_REWARD_EPS))
-
-
-def log_scaled_improvement(
-    prev_best: float, new_best: float, rng_range: float
-) -> float:
-    """Log-scaled best-so-far improvement over a segment."""
-    return _log_scale(scaled_improvement(prev_best, new_best, rng_range))
+__all__ = [
+    "TranslationEnv",
+    "scaled_improvement",
+    "log_scaled_improvement",
+    "_log_scale",
+    "_REWARD_EPS",
+]
 
 
 class TranslationEnv(gym.Env):
@@ -380,7 +369,7 @@ class TranslationEnv(gym.Env):
             self._optimum = None
             self._range = max(float(np.median(y_probe)) - self._best_y, 1e-5)
 
-        self._src_native = _augment(warmup, dim)
+        self._src_native = augment_native(warmup, dim)
         self._src_algo = start_algo
         self._tgt_algo = other_algo
         self._step_idx = 0
@@ -464,7 +453,7 @@ class TranslationEnv(gym.Env):
         self._update_best(advance_result)
         self._n_fe = advance_result.get("n_function_evaluations", self._n_fe)
         self._accumulate_history(advance_result)
-        self._src_native = _augment(advance_opt, self.dim)
+        self._src_native = augment_native(advance_opt, self.dim)
         self._src_algo = target
         self._tgt_algo = self.algo_a if target == self.algo_b else self.algo_b
         self._step_idx += 1
@@ -496,42 +485,17 @@ class TranslationEnv(gym.Env):
         raise ValueError(f"unknown reward component {mode!r}")
 
     def _run_term(self, result: dict, prev_best: float, rng: float) -> float:
-        """Score one optimizer run's segment — the building block every mode's
-        translated/baseline term shares, so they stay comparable within a step.
-
-        'aocc' (default): Area Over the Convergence Curve — the mean over the
-        run's evaluations of the normalized log-precision closed toward the
-        optimum (higher = faster/lower convergence), in [0, 1]. Captures the
-        transient value of the hand-off, which the endpoint washes out over a
-        long segment. 'endpoint': the original log-scaled best-so-far
-        improvement at the segment boundary only. AOCC needs the optimum; when
-        the suite doesn't expose it, this falls back to the endpoint measure."""
-        if self.reward_measure == "aocc" and self._optimum is not None:
-            aocc = self._aocc(result.get("y_history"), prev_best)
-            if aocc is not None:
-                return aocc
-        best = result.get("best_so_far_y", float("inf"))
-        improvement = max(0.0, prev_best - best)
-        return _log_scale(float(np.clip(improvement / rng, 0.0, 1.0)))
-
-    def _aocc(self, y_history, prev_best: float) -> float | None:
-        """Area Over the Convergence Curve for one run, in [0, 1].
-
-        The best-so-far curve is seeded at ``prev_best`` (the incumbent at the
-        switch) and run over the segment's evaluations. Each point's precision is
-        the fraction of the log-gap closed from the gap-at-switch (``g_hi``, so
-        the curve starts at 0) down to the floor ``g_lo = g_hi * 10**(-decades)``
-        (full credit). AOCC is the mean over evaluations — reaching high
-        precision EARLIER raises it. Returns None when there is no history."""
-        if y_history is None or len(y_history) == 0:
-            return None
-        y = np.asarray(y_history, dtype=np.float64).ravel()
-        g_hi = max(prev_best - self._optimum, 1e-12)
-        g_lo = g_hi * (10.0 ** (-self.aocc_decades))
-        best = np.minimum(prev_best, np.minimum.accumulate(y))  # best-so-far curve
-        gap = np.clip(best - self._optimum, g_lo, g_hi)
-        v = np.log10(g_hi / gap) / self.aocc_decades  # per-eval precision in [0, 1]
-        return float(v.mean())
+        """Score one optimizer run's segment via ``cat.rl.reward.run_term``, with
+        this env's measure/optimum/decades — the building block every mode's
+        translated/baseline term shares, so they stay comparable within a step."""
+        return run_term(
+            result,
+            prev_best,
+            rng,
+            measure=self.reward_measure,
+            optimum=self._optimum,
+            decades=self.aocc_decades,
+        )
 
     def _noswitch_term(self, target_fe, seg_seed, prev_best, rng) -> float:
         """Score of the *source* optimizer continuing (no switch) from its own
@@ -569,7 +533,7 @@ class TranslationEnv(gym.Env):
             self._best_x = result.get("best_so_far_x", self._best_x)
 
     def source_has_full_state(self) -> bool:
-        return _has_full_state(self._src_algo, self._src_native)
+        return has_full_state(self._src_algo, self._src_native)
 
     def spec(self, seed: int | None = None) -> dict:
         """Picklable constructor kwargs that rebuild this env (the live ioh

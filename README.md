@@ -65,48 +65,27 @@ cp .env.example .env      # then edit WANDB_API_KEY / WANDB_PROJECT / WANDB_ENTI
 ```
 
 Then pass `--wandb` (optionally `--wandb-project` / `--wandb-run-name`) to
-`train.py`, `train_ppo.py`, or `train_td3.py`. Per-epoch (supervised) or
-per-update (RL) metrics are logged. Set `WANDB_MODE=offline` to sync later, or
-`disabled` to turn it off. Without `--wandb` nothing W&B-related is touched.
-
-## Train
-
-```bash
-python train.py PSO CMAES -d 2 3 5 --n-individuals 12 \
-    --fe-multiplier 2000 --n-switches 8 --epochs 30 --seed 42
-```
-
-Runs BBOB problems while alternating between the two named algorithms, snapshots
-their internal states, and trains the translator. Saves `models/PSO_CMAES.pt`.
-
-Each episode is split into `--n-switches` segments whose boundaries are **not**
-fixed checkpoints: they are sampled **log-uniformly over the FE budget**,
-independently per problem. Because optimization progress is roughly linear in
-`log(FE)`, this places more switches early (where the state changes fast) and
-fewer late — and gives varied, randomized switch positions across the dataset.
-
-Key flags: `-d/--dims`, `--split {easy,all}`, `--schedule {alternate,random}`,
-`--n-switches` (segments per episode), `--n-individuals` (fix a shared
-population size — recommended when pairing a swarm with an ES), and the loss
-weights `--w-cycle/--w-recon/--w-utility`.
+`uv run train` or `uv run train-td3`. Per-update metrics are logged. Set
+`WANDB_MODE=offline` to sync later, or `disabled` to turn it off. Without
+`--wandb` nothing W&B-related is touched.
 
 ## Train with reinforcement learning (PPO or TD3)
 
-The supervised utility term is only a *proxy* for what we actually want — that
-the translated state makes the target optimizer optimize well, which is
-non-differentiable. The RL trainers optimize that true objective directly over a
-Gymnasium environment, reusing the **same** set-equivariant network as the
+We want the translated state to make the target optimizer *optimize well*, which
+is non-differentiable. The RL trainers optimize that true objective directly over
+a Gymnasium environment, with the set-equivariant translator network as the
 policy. Two interchangeable trainers are provided; they share their environment,
-CLI, and W&B/checkpoint plumbing (`rl_common.py`) and differ only in the
-learning algorithm:
+CLI, and W&B/checkpoint plumbing (`cat/cli/common.py`) and differ only in the
+learning algorithm. Each is a console script (see `[project.scripts]`), run with
+`uv run`:
 
 ```bash
 # on-policy, stochastic-action PPO
-python train_ppo.py PSO CMAES -d 2 3 5 --n-individuals 12 \
+uv run train PSO CMAES -d 2 3 5 --n-individuals 12 \
     --n-switches 6 --fe-multiplier 2000 --updates 100 --rollout-steps 1024
 
 # off-policy, deterministic-action TD3 (twin critics + replay buffer)
-python train_td3.py PSO CMAES -d 2 3 5 --n-individuals 12 \
+uv run train-td3 PSO CMAES -d 2 3 5 --n-individuals 12 \
     --n-switches 6 --fe-multiplier 2000 --updates 100 --rollout-steps 1024
 ```
 
@@ -139,7 +118,7 @@ Shared across both trainers:
 - **Critic**: its own encoder (decoupled from the actor). It additionally
   consumes a side-input of the 2 progress scalars (running-normalized). This
   feeds **only the critic** (the actor/translator stays a function of the
-  optimizer state alone, so `evaluate.py` and the supervised path are unaffected).
+  optimizer state alone, so the evaluator (`uv run eval`) is unaffected).
 - **Normalization** (on by default): rewards are scaled by the running std of the
   discounted return, and the scalar context observation is standardized by its
   running mean/std — both persisted across updates so value targets and
@@ -152,7 +131,7 @@ Shared across both trainers:
   and the structured covariance action; minibatches are grouped by
   `(target_algo, D, N)` so every batch is shape-homogeneous.
 
-**PPO** (`cat/rl/ppo.py`, on-policy): clipped-surrogate + GAE over a
+**PPO** (`cat/rl/ppo/`, on-policy): clipped-surrogate + GAE over a
 sliding-window rollout buffer, with PPO value-clipping and a Huber value loss so
 a value-function spike can't swamp the policy gradient. Exploration is a learned
 Gaussian whose log-std is **per action segment per target algorithm** (e.g.
@@ -163,7 +142,7 @@ param group at `lr × --std-lr-mult`, since one scalar needs a far larger step
 than the rest of the network to track its optimum. Saves
 `models/PSO_CMAES_ppo.pt`.
 
-**TD3** (`cat/rl/td3.py`, off-policy): a deterministic actor (the translator's
+**TD3** (`cat/rl/td3/`, off-policy): a deterministic actor (the translator's
 mean action, no learned std) with twin critics — `min(Q1, Q2)` targets, delayed
 & Polyak-averaged target networks, and target-policy smoothing — trained from a
 replay buffer. Exploration is fixed-scale Gaussian noise added to the action
@@ -175,13 +154,13 @@ dimension varies with `(algo, D, N)`, the critic can't concatenate a fixed-size
 encoded with the target algo's own `StateEncoder` — an "action-as-state" critic.
 Saves `models/PSO_CMAES_td3.pt`.
 
-Either checkpoint is consumed directly by `evaluate.py`
+Either checkpoint is consumed directly by `uv run eval`
 (`--model models/PSO_CMAES_ppo.pt` or `..._td3.pt`).
 
 ## Evaluate (the headline metric)
 
 ```bash
-python evaluate.py PSO CMAES -d 2 3 5 --n-individuals 12 --max-problems 60
+uv run eval PSO CMAES -d 2 3 5 --n-individuals 12 --max-problems 60
 ```
 
 On the BBOB **test** split, warms up the source optimizer to a switch point
@@ -202,18 +181,20 @@ Success = translated ≥ lossy on average. The mean cycle-consistency drift
 cat/
 ├── optimizers/      # vendored SubOptimizer base + PSO family + CMA-ES
 ├── suite/           # IOH/BBOB problem loader + train/test splits
-├── state/           # StateSpec schema + native<->canonical tensor conversion
-├── data/            # episode collector (A/B switching) + grouped dataset
+├── state/           # StateSpec schema + native<->canonical conversion, batching
 ├── models/          # norm, set-equivariant layers, encoder, heads, translator
-├── losses.py        # cycle + reconstruction + utility-proxy
-├── train_loop.py    # supervised training orchestration + checkpoint io
-└── rl/              # RL path: env (gymnasium), policy (actor-critic), ppo, td3
-train.py             # supervised:  python train.py <ALG_A> <ALG_B>
-train_ppo.py         # PPO (on-policy):   python train_ppo.py <ALG_A> <ALG_B>
-train_td3.py         # TD3 (off-policy):  python train_td3.py <ALG_A> <ALG_B>
-rl_common.py         # shared RL CLI args + env/logger construction
-evaluate.py          # translated vs lossy vs cold hand-off (loads any checkpoint)
-tests/               # round-trip, equivariance/PSD, overfit, RL env + PPO + TD3
+├── losses.py        # cycle + reconstruction + utility-proxy terms
+├── train_loop.py    # device resolution + checkpoint io
+├── rl/              # RL core: env (gymnasium), reward, policy, normalize
+│   ├── ppo/         #   PPO: config / rollout / update / loop
+│   └── td3/         #   TD3: config / networks / buffer / rollout / update / loop
+└── cli/             # console-script entry points + shared CLI/env plumbing
+    ├── common.py    #   shared RL CLI args + env/logger construction
+    ├── train_ppo.py #   `uv run train`        <ALG_A> <ALG_B>
+    ├── train_td3.py #   `uv run train-td3`    <ALG_A> <ALG_B>
+    ├── evaluate.py  #   `uv run eval`         translated vs lossy vs cold hand-off
+    └── evaluate_switcher.py  # `uv run eval-switch`  multi-switch evaluation
+tests/               # round-trip, equivariance/PSD, RL env + PPO + TD3
 ```
 
 Adding a new algorithm to the study: see

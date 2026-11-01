@@ -5,8 +5,7 @@ fields of very different raw scale contribute comparably:
 
 * **cycle-consistency** — the user's rule: with the population held fixed,
   ``A -> B -> A`` must change A's own algorithm-specific parameters as little as
-  possible. Two interchangeable ways to score the round trip (picked via
-  ``batch_losses(..., cycle_mode=...)``):
+  possible. Two interchangeable ways to score the round trip:
     - ``"field"`` (default) — ``field_distance(round_trip_A, A)``, comparing the
       fully decoded specific fields.
     - ``"latent"`` — ``latent_cycle_loss``, comparing ``Encoder_A(A)`` to
@@ -20,6 +19,10 @@ fields of very different raw scale contribute comparably:
   target optimizer, so the cycle cannot be solved by a useless near-identity
   mapping. CMA-ES target: elites are high-likelihood under the decoded search
   distribution. PSO target: decoded velocities point down-hill toward the best.
+
+The RL trainers consume these terms individually (``field_distance`` /
+``latent_cycle_loss`` for the cycle penalty, ``utility_loss`` as a proxy); the
+cycle penalty is wired in ``cat/rl/ppo/update.py`` and ``cat/models/translator.py``.
 """
 
 from __future__ import annotations
@@ -152,44 +155,3 @@ def utility_loss(mid: CanonicalState, ctx: NormContext) -> Tensor:
     if fn is None:
         return mid.positions.new_zeros(())
     return fn(mid, ctx)
-
-
-# --------------------------------------------------------------------------- #
-# Combined objective for one batch                                            #
-# --------------------------------------------------------------------------- #
-
-
-def batch_losses(
-    pair,
-    state: CanonicalState,
-    ctx: NormContext,
-    cycle_mode: str = "field",
-    w_cycle: float = 1.0,
-) -> dict[str, Tensor]:
-    """Run cycle + reconstruction + utility for one homogeneous batch.
-
-    ``cycle_mode`` picks how the ``A -> B -> A`` round trip is scored: "field"
-    (default, decoded specific fields) or "latent" (re-encoded latents only).
-    ``w_cycle == 0.0`` skips the round trip's ``B -> A`` leg (and, for "latent",
-    the re-encodes) entirely rather than computing it just to multiply by zero
-    — ``mid`` (needed by the utility proxy) is still produced via the cheaper
-    ``A -> B`` leg alone.
-    """
-    tgt = pair.other(state.algo)
-    mid = pair.translate(state, tgt, ctx)
-    recon = pair.reconstruct(state, ctx)
-    if w_cycle == 0.0:
-        cycle = state.positions.new_zeros(())
-    elif cycle_mode == "field":
-        back = pair.translate(mid, state.algo, ctx)
-        cycle = field_distance(back, state, ctx)
-    elif cycle_mode == "latent":
-        back = pair.translate(mid, state.algo, ctx)
-        cycle = latent_cycle_loss(pair, state, back, ctx)
-    else:
-        raise ValueError(f"unknown cycle_mode {cycle_mode!r}")
-    return {
-        "cycle": cycle,
-        "recon": field_distance(recon, state, ctx),
-        "utility": utility_loss(mid, ctx),
-    }

@@ -10,7 +10,7 @@ into a replay buffer, and twin critics (Q1, Q2) are trained via Double-Q-style
 target computation with delayed, Polyak-averaged target networks (see
 cat/rl/td3.py for the full design rationale, in particular how the critic
 handles the action's variable dimensionality). Shared CLI/env-building logic
-lives in rl_common.py.
+lives in cat/cli/common.py.
 
 Saves a checkpoint compatible with evaluate.py (`models/<A>_<B>_td3.pt`).
 """
@@ -25,7 +25,7 @@ import torch
 
 from cat.rl.td3 import TD3Actor, TD3Config, TwinQCritic, train_td3
 from cat.train_loop import resolve_device, translator_meta
-from rl_common import (
+from cat.cli.common import (
     add_algo_args,
     add_env_args,
     add_logging_args,

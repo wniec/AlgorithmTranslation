@@ -1,6 +1,6 @@
 """Portfolio of available sub-optimizers.
 
-Add new algorithm classes here and they become selectable by name in train.py
+Add new algorithm classes here and they become selectable by name in train_ppo.py
 / evaluate.py. A new optimizer also needs a ``StateSpec`` in
 ``cat/state/schema.py`` before it can participate in translation.
 """

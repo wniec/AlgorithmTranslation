@@ -284,7 +284,7 @@ def test_episode_runs_with_independent_population_sizes():
     smaller-than-target carried population makes the target optimizer's own
     set_data/initialize discard it and cold-init instead — exactly the same
     degenerate-source case the real PPO rollout loop already guards against
-    with source_has_full_state() (see collect_rollout in cat/rl/ppo.py).
+    with source_has_full_state() (see collect_rollout in cat/rl/ppo/rollout.py).
     Drive the env the same defensive way and confirm every completed step
     still yields a finite reward."""
     env = _env_independent_sizes(n_switches=4, n_a=8, n_b=20)

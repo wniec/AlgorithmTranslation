@@ -49,14 +49,15 @@ import argparse
 import numpy as np
 import torch
 
-from cat.data.collector import _augment, _has_full_state
-from cat.data.dataset import collate
 from cat.models.norm import NormContext
 from cat.optimizers.base import get_checkpoints, sample_switch_points
 from cat.optimizers.portfolio import PORTFOLIO
 from cat.state.canonical import (
     CanonicalState,
+    augment_native,
+    collate,
     from_canonical,
+    has_full_state,
     to_canonical,
     warm_start_optimizer,
 )
@@ -250,7 +251,7 @@ def run_switcher(mode, algos, checkpoints, prob, optimum, n_for, base_seed, pair
         if i == 0:
             payload = None  # no source yet: cold-start the first segment
         else:
-            full = _has_full_state(cur_algo, native)
+            full = has_full_state(cur_algo, native)
             has_shared = native.get("x") is not None and native.get("y") is not None
             if algo == cur_algo:
                 # Stay: warm-continue on the algorithm's own state (all modes).
@@ -273,7 +274,7 @@ def run_switcher(mode, algos, checkpoints, prob, optimum, n_for, base_seed, pair
             algo, cfg, max_fe, target_fe, n_fe, best_in, n_for(algo), seg_seed, payload
         )
         n_fe = opt.n_function_evaluations
-        native = _augment(opt, dim)
+        native = augment_native(opt, dim)
         cur_algo = algo
 
     return {**_metrics(rec, max_fe, optimum), "fallbacks": int(fallbacks)}

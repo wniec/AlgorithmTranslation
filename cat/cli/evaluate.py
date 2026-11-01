@@ -25,15 +25,16 @@ import argparse
 import numpy as np
 import torch
 
-from cat.data.collector import _augment, _has_full_state
-from cat.data.dataset import collate
 from cat.losses import field_distance
 from cat.models.norm import NormContext
 from cat.optimizers.base import sample_switch_points
 from cat.optimizers.portfolio import PORTFOLIO
 from cat.state.canonical import (
     CanonicalState,
+    augment_native,
+    collate,
     from_canonical,
+    has_full_state,
     to_canonical,
     warm_start_optimizer,
 )
@@ -121,8 +122,8 @@ def evaluate_problem(
     # --- warm up the source optimizer to `switch` FEs -------------------- #
     src = _make(source, cfg, max_fe, switch, float("inf"), n_individuals, base_seed)
     src.optimize()
-    native_src = _augment(src, dim)
-    if not _has_full_state(source, native_src):
+    native_src = augment_native(src, dim)
+    if not has_full_state(source, native_src):
         return None
     best_after_warmup = float(src.best_so_far_y)
     n_fe = src.n_function_evaluations
