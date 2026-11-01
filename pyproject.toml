@@ -38,6 +38,13 @@ ignore = [
     "RUF046",
 ]
 
+[tool.ruff.lint.isort]
+# Pin `cat` as first-party. Ruff's auto-detection classifies cat.* differently
+# depending on whether the project is installed in the env (editable locally vs
+# a fresh `uv sync` in CI), which made import sorting pass locally but fail in
+# CI. Declaring it explicitly makes the ordering deterministic everywhere.
+known-first-party = ["cat"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
