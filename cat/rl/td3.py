@@ -319,8 +319,8 @@ def collect_rollout(
     dropped and the rest of the episode abandoned.
 
     The third return value maps each switch type (``"<source>-><target>"``) to
-    its raw per-step rewards, under the ``relative`` and ``noswitch`` reward
-    modes (see ``cat.rl.ppo.collect_rollout``)."""
+    its raw per-step rewards, for every comparable-baseline reward mode, plus
+    each summed component by mode name (see ``cat.rl.ppo.collect_rollout``)."""
     transitions: list[TD3Transition] = []
     ep_returns: list[float] = []
     switch_rewards: dict[str, list[float]] = defaultdict(list)
@@ -373,10 +373,10 @@ def collect_rollout(
                 )
             )
             rewards.append(reward)
-            if env.reward_mode in ("relative", "noswitch", "mixed"):
+            if env.logs_per_direction:
                 switch_rewards[switch].append(reward)  # raw, per switch direction
-            # In 'mixed' mode also break out the two additive components so each
-            # part's mean is logged (reward/mixed_noswitch, reward/mixed_relative).
+            # For a summed (multi-mode) reward, also break out each additive
+            # component so its mean is logged (reward/<mode>, e.g. reward/noswitch).
             for part, value in info.get("reward_parts", {}).items():
                 switch_rewards[part].append(value)
             obs = next_obs
@@ -572,7 +572,8 @@ def train_td3(
         )
         m["update"] = u
         m["mean_return"] = float(np.mean(ep_returns)) if ep_returns else 0.0
-        # Per-switch-direction mean reward (relative/noswitch modes; else empty).
+        # Per-switch-direction mean reward (comparable baselines; empty for a
+        # pure 'absolute' reward), plus each summed component's mean by mode name.
         for switch, rs in switch_rewards.items():
             m[f"reward/{switch}"] = float(np.mean(rs))
         m["n_transitions"] = len(buffer)

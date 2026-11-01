@@ -62,6 +62,17 @@ class RunningMeanStd:
         self.count = float(d["count"])
 
 
+def discounted_returns(rewards: list[float], gamma: float) -> list[float]:
+    """The running discounted return ``R_t = gamma * R_{t-1} + r_t`` over one
+    episode — the quantity whose std drives reward normalization."""
+    R = 0.0
+    out = []
+    for r in rewards:
+        R = gamma * R + r
+        out.append(R)
+    return out
+
+
 def normalize_rewards(
     rewards: list[float], gamma: float, ret_rms: RunningMeanStd
 ) -> list[float]:
@@ -71,11 +82,15 @@ def normalize_rewards(
     real signal (e.g. the default ``noswitch`` env reward is one-sided, always
     <= 0) that a value/Q function should learn to predict, not have subtracted
     away."""
-    R = 0.0
-    discounted = []
-    for r in rewards:
-        R = gamma * R + r
-        discounted.append(R)
+    discounted = discounted_returns(rewards, gamma)
     ret_rms.update(np.asarray(discounted)[:, None])
+    return scale_by_ret_std(rewards, ret_rms)
+
+
+def scale_by_ret_std(rewards: list[float], ret_rms: RunningMeanStd) -> list[float]:
+    """Divide rewards by the current running return std *without* updating the
+    estimator — used by parallel rollout workers, which share a frozen snapshot
+    of ``ret_rms`` for the whole update and let the main process merge the new
+    discounted returns once (see ``cat.rl.ppo``)."""
     std = float(ret_rms.std.item()) + 1e-8
     return [r / std for r in rewards]

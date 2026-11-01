@@ -66,6 +66,15 @@ def parse_args():
     p.add_argument("--updates", type=int, default=500)
     p.add_argument("--rollout-steps", type=int, default=1024)
     p.add_argument(
+        "--n-workers",
+        type=int,
+        default=1,
+        help="parallel rollout worker processes (default 1 = single process). "
+        ">1 splits each rollout across that many processes, each running its "
+        "own envs/optimizers; the counterfactual optimizer runs in env.step are "
+        "the bottleneck, so this scales collection roughly linearly on CPU.",
+    )
+    p.add_argument(
         "--buffer-capacity",
         type=int,
         default=8192,
@@ -79,7 +88,34 @@ def parse_args():
     p.add_argument("--gae-lambda", type=float, default=0.5)
     p.add_argument("--clip", type=float, default=0.25)
     p.add_argument("--ent-coef", type=float, default=0.0)
-    p.add_argument("--vf-coef", type=float, default=0.03)
+    p.add_argument("--vf-coef", type=float, default=0.5)
+    p.add_argument(
+        "--vf-clip",
+        type=float,
+        default=None,
+        help="value-function clip window, decoupled from --clip. Default: none "
+        "(no value clipping — frees the critic to track wide returns). Pass 0.2 "
+        "to reproduce the old throttle, or a larger value for a looser window.",
+    )
+    p.add_argument(
+        "--scale-feature",
+        dest="scale_feature",
+        action="store_true",
+        help="add a problem-scale channel (log10 of the initial optimum gap) to "
+        "the critic context, so it can tell different-magnitude problems apart "
+        "(raises the achievable explained variance).",
+    )
+    p.add_argument(
+        "--use-ela",
+        dest="use_ela",
+        action="store_true",
+        help="append 22 Exploratory Landscape Analysis features (pflacco), "
+        "computed from the points evaluated up to each switch (capped at 500), "
+        "to the critic context. Landscape descriptors correlate with the "
+        "fractional improvement a problem allows — the between-problem signal "
+        "that caps explained variance. Critic-side only; adds a pflacco call "
+        "(~0.4s) per acted step, so prefer running with --n-workers.",
+    )
     p.add_argument("--lambda-cycle", type=float, default=0.0)
     p.add_argument(
         "--cycle-mode",
@@ -125,6 +161,7 @@ def main():
         cov_rank=args.cov_rank,
         log_std_init=args.log_std_init,
         resample_seed=args.resample_seed,
+        context_dim=envs[0].context_dim,
     )
     cfg = PPOConfig(
         updates=args.updates,
@@ -137,6 +174,7 @@ def main():
         clip=args.clip,
         ent_coef=args.ent_coef,
         vf_coef=args.vf_coef,
+        vf_clip=args.vf_clip,
         lambda_cycle=args.lambda_cycle,
         cycle_mode=args.cycle_mode,
         lr=args.lr,
@@ -145,6 +183,7 @@ def main():
         norm_obs=args.norm_obs,
         device=args.device,
         seed=args.seed,
+        n_workers=args.n_workers,
     )
     logger = build_logger(args, "ppo")
     ppo_log = train_ppo(ac, envs, cfg, log_fn=logger.log)

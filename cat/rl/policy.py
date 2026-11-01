@@ -66,8 +66,10 @@ class ActorCritic(nn.Module):
         cov_rank: int = 4,
         log_std_init: float = -1.0,
         resample_seed: int | None = None,
+        context_dim: int = CONTEXT_DIM,
     ):
         super().__init__()
+        self.context_dim = context_dim
         # Drives the (independent of torch's RNG) population-resizing jitter in
         # _assemble_native, so it's reproducible across runs given a seed.
         self._resample_rng = np.random.default_rng(resample_seed)
@@ -82,7 +84,7 @@ class ActorCritic(nn.Module):
         self.critic_encoders = nn.ModuleDict(
             {a: StateEncoder(a, hidden, n_layers) for a in (algo_a, algo_b)}
         )
-        self.critic = MLP([hidden + CONTEXT_DIM, hidden, 1])
+        self.critic = MLP([hidden + context_dim, hidden, 1])
         # Exploration std = a per-segment *base* (below) plus a per-dimension,
         # population-conditioned residual (the std heads that follow). The base
         # is one log-std per action segment per target algorithm: a single

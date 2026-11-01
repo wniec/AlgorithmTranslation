@@ -59,16 +59,50 @@ def add_env_args(p: argparse.ArgumentParser) -> None:
         "starting algorithm is drawn at random per episode",
     )
     p.add_argument(
+        "--endpoint-reward",
+        dest="reward_measure",
+        action="store_const",
+        const="endpoint",
+        default="aocc",
+        help="score each segment by the best-so-far improvement at its boundary "
+        "only (the original measure). Default is 'aocc' (Area Over the "
+        "Convergence Curve), which rewards converging faster/lower over the "
+        "whole segment — so the hand-off's transient value survives a long "
+        "single segment instead of being washed out by the target's adaptation.",
+    )
+    p.add_argument(
+        "--aocc-decades",
+        type=float,
+        default=4.0,
+        help="AOCC log-precision span: how many decades of the gap-at-switch map "
+        "onto [0, 1] (floor g_lo = g_hi * 10**-decades). Only used by the "
+        "default 'aocc' measure.",
+    )
+    p.add_argument(
+        "--reward-seeds",
+        type=int,
+        default=1,
+        help="average the per-step reward over this many optimizer seeds "
+        "(paired per seed for common random numbers). 1 (default) = original "
+        "single-sample reward. The single-segment reward is a high-variance "
+        "difference of stochastic runs, so K>1 cuts reward noise ~1/K — "
+        "denoising both the critic target and the policy gradient — at ~Kx the "
+        "counterfactual optimizer cost (offset by --n-workers). Seed 0 is the "
+        "run that advances the episode.",
+    )
+    p.add_argument(
         "--reward-mode",
-        choices=["noswitch", "absolute", "relative", "mixed"],
         default="noswitch",
         help="every mode is log_scale(translated) - log_scale(baseline). "
         "'noswitch' (default) baseline = the source optimizer continuing "
         "(signed switch-worthiness: + if the switch beats staying, - if worse); "
         "'absolute' baseline = 0 (raw improvement); 'relative' baseline = the "
-        "lossy default hand-off (translation quality); 'mixed' = noswitch + "
-        "relative summed. noswitch/relative run one extra counterfactual "
-        "optimizer per step (~2x cost); mixed runs both (~3x cost).",
+        "lossy default hand-off (translation quality); 'coldtarget' baseline = "
+        "the target (second) optimizer run cold from the start (beat running "
+        "the second algorithm alone). Pass a comma-separated list "
+        "(e.g. 'noswitch,relative,coldtarget') to sum several modes' rewards; "
+        "'mixed' is the alias for 'noswitch,relative'. Each non-absolute mode "
+        "runs one extra counterfactual optimizer per step (~2x cost each).",
     )
 
 
@@ -110,6 +144,11 @@ def build_envs(args) -> list[TranslationEnv]:
                 reward_mode=args.reward_mode,
                 switch_cdb=args.switch_cdb,
                 random_start=not args.fixed_order,
+                scale_feature=getattr(args, "scale_feature", False),
+                use_ela=getattr(args, "use_ela", False),
+                reward_seeds=getattr(args, "reward_seeds", 1),
+                reward_measure=getattr(args, "reward_measure", "aocc"),
+                aocc_decades=getattr(args, "aocc_decades", 4.0),
                 seed=args.seed * 100 + dim,
             )
         )
