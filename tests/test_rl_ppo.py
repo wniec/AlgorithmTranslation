@@ -4,6 +4,7 @@ the sampled covariance action stays PSD."""
 import math
 
 import numpy as np
+import pytest
 
 from cat.rl.env import TranslationEnv
 from cat.rl.policy import ActorCritic
@@ -221,3 +222,28 @@ def test_parameters_change_after_update():
     )
     after = list(ac.parameters())
     assert any((a - b).abs().sum().item() > 0 for a, b in zip(after, before, strict=True))
+
+
+@pytest.mark.integration
+def test_ppo_parallel_rollout_runs_and_merges_stats():
+    """The multi-process rollout path (spawned worker pool + frozen-normalizer
+    snapshots merged back into the live estimators) runs end-to-end and yields
+    finite metrics and finite merged obs/return statistics."""
+    ac = ActorCritic("PSO", "CMAES", hidden=32, n_layers=1)
+    cfg = PPOConfig(
+        updates=1,
+        rollout_steps=24,
+        ppo_epochs=1,
+        minibatch_size=8,
+        n_workers=2,
+        seed=1,
+        log_every=0,
+    )
+    log = train_ppo(ac, _envs(), cfg)
+    assert len(log.history) == 1
+    row = log.history[0]
+    assert math.isfinite(row["mean_return"]) and math.isfinite(row["policy_loss"])
+    # The per-update merge of the workers' frozen snapshots left sane stats.
+    assert log.obs_rms is not None
+    assert np.all(np.isfinite(log.obs_rms.mean)) and np.all(np.isfinite(log.obs_rms.var))
+    assert log.ret_rms is not None and np.all(np.isfinite(log.ret_rms.var))

@@ -5,6 +5,7 @@ the shared population) so no policy is needed."""
 import itertools
 
 import numpy as np
+import pytest
 
 from cat.rl.env import TranslationEnv, scaled_improvement
 from cat.suite import IOHSuite, build_problem_ids
@@ -419,3 +420,19 @@ def test_ela_combines_with_scale_feature():
     assert env.context_dim == 3 + ELA_DIM
     obs, _ = env.reset()
     assert obs["context"].shape == (3 + ELA_DIM,)
+
+
+def test_normalize_reward_modes_parsing_and_validation():
+    """The reward-mode parser: single mode, the 'mixed' alias, comma-separated
+    lists (with whitespace), alias-within-list expansion, and the error paths."""
+    norm = TranslationEnv._normalize_reward_modes
+    assert norm("relative") == ["relative"]
+    assert norm("mixed") == ["noswitch", "relative"]
+    assert norm("noswitch,relative") == ["noswitch", "relative"]
+    assert norm("  noswitch , relative ") == ["noswitch", "relative"]
+    assert norm(["noswitch", "coldtarget"]) == ["noswitch", "coldtarget"]
+    # 'mixed' expands even when it appears inside a list/comma string.
+    assert norm("mixed,coldtarget") == ["noswitch", "relative", "coldtarget"]
+    for bad in ("", "bogus", [], ["relative", "nope"]):
+        with pytest.raises(ValueError):
+            norm(bad)
