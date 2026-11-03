@@ -1,7 +1,7 @@
 #!/bin/bash
 # Train the PSO->CMAES state translator with PPO on an HPC GPU node.
 #
-# Submit with:   mkdir -p logs && sbatch train_ppo.slurm
+# Submit with:   mkdir -p logs && sbatch train.slurm
 # (the logs/ dir must exist BEFORE submit — SLURM opens --output/--error itself).
 #
 # Fill every <ADD> below — those are the names that vary per cluster
@@ -50,7 +50,7 @@ export WANDB_API_KEY=<ADD>             # or: export WANDB_MODE=offline  (then dr
 # Currently-suggested configuration: single PSO->CMAES switch, AOCC reward
 # (default), relative mode, reward normalization ON, no ELA, exploration kept
 # alive with a small entropy bonus. --n-workers matches cpus-per-task - 2.
-uv run train_ppo.py --wandb --reward-mode relative --lambda-cycle 0.0 PSO CMAES \
+uv run train --wandb --reward-mode relative --lambda-cycle 0.0 PSO CMAES \
   --dims 5 --n-switches 1 --fe-multiplier 1000 --switch-cdb 3.7 --updates 1000 \
   --fixed-order --n-workers 6 --reward-seeds 4 --ent-coef 1e-3 \
   --seed "${SLURM_ARRAY_TASK_ID:-42}"

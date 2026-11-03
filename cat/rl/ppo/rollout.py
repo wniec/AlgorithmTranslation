@@ -9,6 +9,7 @@ snapshot of the policy + normalizers, and the main process merges the results.
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import math
 import multiprocessing as mp
@@ -18,6 +19,7 @@ from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 import torch
+import torch.multiprocessing as torch_mp
 
 from cat.rl.env import TranslationEnv
 from cat.rl.normalize import (
@@ -167,6 +169,23 @@ def collect_rollout(
 _WORKER: dict = {}
 
 
+def _use_file_system_sharing() -> None:
+    """Have torch share tensors between processes via a shm *file* (mmap'd, with
+    the FD closed right after mapping) instead of the default 'file_descriptor'
+    strategy, which passes one open FD per storage over the pool socket.
+
+    The parallel rollout returns transitions holding tensors, and the
+    sliding-window ``RolloutBuffer`` retains them across updates. Under
+    'file_descriptor' those FDs accumulate past the process's open-file limit,
+    so the worker socket eventually delivers none of them -- the
+    ``received 0 items of ancdata`` -> ``BrokenProcessPool`` failure. Under
+    'file_system' a retained tensor costs shm pages, not a permanent FD.
+    """
+    # Suppress: strategy unavailable on this platform -> keep torch's default.
+    with contextlib.suppress(RuntimeError, ValueError):
+        torch_mp.set_sharing_strategy("file_system")
+
+
 def _worker_init(ac: ActorCritic, specs, base_seed: int, cfg: PPOConfig, counter):
     """Runs once per worker process. Builds this worker's envs (with a distinct
     seed offset so workers don't duplicate each other's episode stream) and
@@ -178,6 +197,7 @@ def _worker_init(ac: ActorCritic, specs, base_seed: int, cfg: PPOConfig, counter
     # thread so N worker processes don't oversubscribe the cores with N * (BLAS
     # threads) — that makes more workers slower, not faster.
     torch.set_num_threads(1)
+    _use_file_system_sharing()  # the worker is the sender of the buffered tensors
     ac.to("cpu")
     envs = [TranslationEnv(**spec) for spec in _seeded_specs(specs, wid)]
     _WORKER["ac"] = ac
@@ -256,6 +276,7 @@ def make_executor(ac: ActorCritic, envs, cfg: PPOConfig) -> ProcessPoolExecutor:
     # parent BLAS is unaffected.
     for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
         os.environ.setdefault(var, "1")
+    _use_file_system_sharing()  # parent side: it also receives (and re-sends) tensors
     mp_ctx = mp.get_context("spawn")
     counter = mp_ctx.Value("i", 0)
     specs = [e.spec() for e in envs]
