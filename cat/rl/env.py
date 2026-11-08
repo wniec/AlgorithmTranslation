@@ -1,11 +1,11 @@
 """Gymnasium environment: a BBOB run with learned optimizer hand-offs.
 
-One episode optimizes a single BBOB problem (of a fixed dimension) over
-``n_switches`` segments whose boundaries are sampled log-uniformly over the FE
-budget. The acting optimizer alternates A, B, A, …; at each step the agent
-observes the *source* optimizer's internal state and must produce the *target*
-optimizer's internal state (the translation), which warm-starts the target for
-the next segment.
+One episode optimizes a single BBOB problem (of a fixed dimension) with exactly
+one hand-off: the source optimizer warms up to a switch point sampled
+log-uniformly over the FE budget, the agent observes its internal state and
+produces the *target* optimizer's internal state (the translation), and the
+target runs from that warm start to the end of the budget. Each episode is a
+single step.
 
 * **observation** — a dict with the source optimizer's augmented native state,
   the source/target algorithm names, and a small progress context (fraction of
@@ -18,15 +18,17 @@ the next segment.
   log_scale(baseline improvement)``, differing only in the baseline:
     - ``absolute``: baseline 0 — log-scaled best-so-far improvement over the
       segment.
-    - ``relative``: baseline = the *lossy default* hand-off (shared population
-      only) running the same target. Isolates translation quality — what the
-      action controls — independent of whether switching was wise.
+    - ``relative``: baseline = the hand-off available without a network, running
+      the same target: the *computed* warm start for switches into CMA-ES
+      (``cat/models/prior.py``), the *lossy default* (shared population only) for
+      other targets. Isolates translation quality — what the action controls —
+      independent of whether switching was wise.
     - ``noswitch``: baseline = the *source optimizer continuing* (no switch)
       from its full state. Signed switch-worthiness: positive when the switched
       + translated run outperforms staying, negative when it underperforms.
       Outperforming the reference is rewarded, not penalized.
     - ``coldtarget``: baseline = the *target (second) optimizer run cold* from
-      the very start of the episode up to the segment boundary. The no-switch
+      the very start of the episode to the end of the budget. The no-switch
       counterpart for the other algorithm — "beat just running the second
       algorithm alone from scratch" rather than "beat continuing the first".
     - ``mixed``: the sum of the ``noswitch`` and ``relative`` rewards — the
@@ -58,6 +60,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
+from cat.models.prior import prior_native
 from cat.optimizers.base import sample_switch_points
 from cat.optimizers.portfolio import PORTFOLIO
 from cat.rl.reward import (  # re-exported for back-compat (tests import these here)
@@ -90,7 +93,6 @@ class TranslationEnv(gym.Env):
         suite,
         *,
         fe_multiplier: int = 2000,
-        n_switches: int = 6,
         n_individuals: int | None = 12,
         n_individuals_a: int | None = None,
         n_individuals_b: int | None = None,
@@ -120,7 +122,6 @@ class TranslationEnv(gym.Env):
         self.problem_ids = problem_ids
         self.suite = suite
         self.fe_multiplier = fe_multiplier
-        self.n_switches = n_switches
         # n_individuals is the shared fallback; n_individuals_a/b let each
         # algorithm run with its own population size.
         self.n_individuals = n_individuals
@@ -216,8 +217,8 @@ class TranslationEnv(gym.Env):
         self._best_x = None
         self._range = 1.0
         self._optimum = None  # global optimum value when the suite exposes it (for AOCC)
-        self._checkpoints = None
-        self._step_idx = 0
+        self._switch_fe = None
+        self._done = False
         self._src_native = None
         self._src_algo = None
         self._tgt_algo = None
@@ -315,29 +316,25 @@ class TranslationEnv(gym.Env):
         sw_rng = np.random.default_rng(base)
         self._problem_idx += 1
 
-        # Which algorithm does the cold warmup (and thus the whole A,B,A,B parity).
-        # Randomizing it per episode gives *both* translation directions a
-        # balanced mix of early (high-headroom) and late (low-headroom) slots,
-        # instead of A always taking the even steps and B the odd, later ones.
+        # Which algorithm does the cold warmup, i.e. which direction the single
+        # switch translates. Randomizing it per episode trains both directions;
+        # with random_start=False every episode is algo_a -> algo_b.
         if self.random_start and sw_rng.random() < 0.5:
             start_algo, other_algo = self.algo_b, self.algo_a
         else:
             start_algo, other_algo = self.algo_a, self.algo_b
 
         # Agent-independent probe: fixes best/scale before the agent acts.
-        n_probe = min(2 * dim + 8, max(self._max_fe // (self.n_switches + 3), dim + 1))
+        n_probe = min(2 * dim + 8, max(self._max_fe // 4, dim + 1))
         # The warmup segment must leave room (after the probe) for the source
         # optimizer to complete at least a couple of generations, else it would
         # return an empty state. Bound the earliest switch boundary accordingly.
         fe_min = min(n_probe + 2 * pop, max(self._max_fe - pop, n_probe + pop))
-        # n_switches + 1 boundaries: [warmup_end, seg_1_end, ..., seg_n_end].
-        self._checkpoints = sample_switch_points(
-            self.n_switches + 1,
-            self._max_fe,
-            pop,
-            sw_rng,
-            fe_min=fe_min,
-            cdb=self.switch_cdb,
+        # Two boundaries: [switch point, max_fe]; the second is always max_fe.
+        self._switch_fe = int(
+            sample_switch_points(
+                2, self._max_fe, pop, sw_rng, fe_min=fe_min, cdb=self.switch_cdb
+            )[0]
         )
 
         lb, ub = self._problem.lower_bounds, self._problem.upper_bounds
@@ -351,7 +348,7 @@ class TranslationEnv(gym.Env):
             self._hist_x, self._hist_y = x_probe, y_probe  # seed the ELA history
 
         # Warm up the first algorithm (cold) to build a genuine source state.
-        warmup = self._make_optimizer(start_algo, self._checkpoints[0], base + 1)
+        warmup = self._make_optimizer(start_algo, self._switch_fe, base + 1)
         warmup.set_data(best_x=self._best_x, best_y=self._best_y)
         result = warmup.optimize()
         self._update_best(result)
@@ -373,14 +370,16 @@ class TranslationEnv(gym.Env):
         self._src_native = augment_native(warmup, dim)
         self._src_algo = start_algo
         self._tgt_algo = other_algo
-        self._step_idx = 0
+        self._done = False
         return self._observation(), {"problem_id": pid, "dimension": dim}
 
     def step(self, action_native: dict):
         """``action_native`` is the target's full warm-start dict (shared + specific)."""
+        if self._done:
+            raise RuntimeError("the episode's single switch is done; call reset()")
         target = self._tgt_algo
         prev_best = self._best_y
-        target_fe = int(self._checkpoints[self._step_idx + 1])
+        target_fe = self._max_fe
         # Compute the reward BEFORE mutating episode state, so every
         # counterfactual is constructed from the same pre-segment best / FE.
         rng = max(self._range, 1e-12)
@@ -393,11 +392,11 @@ class TranslationEnv(gym.Env):
         # averaging the per-seed component rewards cuts that noise ~1/K. Each
         # seed j pairs the translated run with its baselines under the SAME seed
         # (base_seg_seed + j), preserving the common-random-numbers cancellation
-        # within a seed. Seed j == 0 is the run that actually ADVANCES the
-        # episode (its state becomes the next source); the other K-1 translated
+        # within a seed. Seed j == 0 is the run recorded as the episode's
+        # outcome (best-so-far, FE count); the other K-1 translated
         # runs serve the reward estimate only, like the counterfactuals — so
         # reward_seeds == 1 reproduces the previous single-sample behaviour.
-        base_seg_seed = self._seed + self._step_idx + 1
+        base_seg_seed = self._seed + 1
         translated_terms: list[float] = []
         advance_opt = advance_result = None
         for j in range(self.reward_seeds):
@@ -415,12 +414,12 @@ class TranslationEnv(gym.Env):
         #     imitate. Signed: outperforming it is rewarded, underperforming is
         #     penalized, but a genuinely better switch is *not* punished for
         #     deviating (unlike the old -|Δ| form).
-        #   relative: the same target run from the *lossy* default hand-off
-        #     (shared population only, same seed). Isolates exactly what the
-        #     action controls — translation quality, independent of whether
-        #     switching was wise.
+        #   relative: the same target run from the hand-off available without a
+        #     network (same seed; see relative_baseline_native). Isolates exactly
+        #     what the action controls — translation quality, independent of
+        #     whether switching was wise.
         #   coldtarget: the *target* (second) optimizer run cold from the very
-        #     start of the episode up to the segment boundary — the no-switch
+        #     start of the episode to the end of the budget — the no-switch
         #     counterpart for the *other* algorithm. Like noswitch (signed
         #     switch-worthiness), but the reference is "just run the second
         #     algorithm alone from scratch" rather than "keep running the first".
@@ -447,26 +446,23 @@ class TranslationEnv(gym.Env):
         reward = float(sum(components.values()))
         reward_parts = components if len(components) > 1 else None
 
-        # Now advance the episode along the seed-0 run: its resulting state
-        # becomes the next source; roles swap. Only this real (acted) run feeds
-        # the ELA history — the counterfactual baselines and the extra-seed
-        # translated runs are hypothetical.
+        # Record the seed-0 run as the episode's outcome (best-so-far, FE count,
+        # final state). Roles swap only so the returned terminal observation is
+        # well formed; it is never acted on.
         self._update_best(advance_result)
         self._n_fe = advance_result.get("n_function_evaluations", self._n_fe)
-        self._accumulate_history(advance_result)
         self._src_native = augment_native(advance_opt, self.dim)
         self._src_algo = target
         self._tgt_algo = self.algo_a if target == self.algo_b else self.algo_b
-        self._step_idx += 1
+        self._done = True
 
-        terminated = self._step_idx >= self.n_switches
+        terminated = True
         info = {"best_y": self._best_y, "n_fe": self._n_fe, "reward": reward}
         if reward_parts is not None:
             info["reward_parts"] = reward_parts
-        # On the terminal step the observation is never acted on, so skip the
-        # (expensive) ELA computation for it.
-        obs = self._observation(include_ela=not terminated)
-        # The next observation is valid only if there is another step to take.
+        # The only step is terminal, so its observation is never acted on: skip
+        # the (expensive) ELA computation for it.
+        obs = self._observation(include_ela=False)
         return obs, reward, terminated, False, info
 
     def _reward_component(
@@ -510,19 +506,27 @@ class TranslationEnv(gym.Env):
         warm_start_optimizer(opt, self._src_native)
         return self._run_term(opt.optimize(), prev_best, rng)
 
+    def relative_baseline_native(self, seed: int = 0) -> dict:
+        """The current switch's 'relative' reference hand-off. Into CMA-ES it is the
+        computed warm start: the lossy default leaves CMA-ES a random mean, which
+        amounts to a restart. Other targets get the shared population only."""
+        n, target = self._src_native, self._tgt_algo
+        if target == "CMAES":
+            return prior_native(
+                self._src_algo, n, self._n_for(target), np.random.default_rng(seed)
+            )
+        return {"x": n["x"], "y": n["y"], "best_x": n["best_x"], "best_y": n["best_y"]}
+
     def _relative_term(self, target, target_fe, seg_seed, prev_best, rng) -> float:
-        """Score of the *lossy* default hand-off (shared population only) running
-        the same target over the same segment — the 'relative' reference. Does
-        not advance the episode."""
-        n = self._src_native
-        shared = {"x": n["x"], "y": n["y"], "best_x": n["best_x"], "best_y": n["best_y"]}
+        """Score of ``relative_baseline_native`` running the same target over the
+        same segment — the 'relative' reference. Does not advance the episode."""
         opt = self._make_optimizer(target, target_fe, seg_seed)
-        opt.set_data(**shared)
+        warm_start_optimizer(opt, self.relative_baseline_native(seg_seed))
         return self._run_term(opt.optimize(), prev_best, rng)
 
     def _coldtarget_term(self, target, target_fe, seg_seed, prev_best, rng) -> float:
         """Score of the *target* (second) optimizer running cold from the very
-        start (FE 0, no warm start) up to the segment boundary — the 'coldtarget'
+        start (FE 0, no warm start) to the end of the budget — the 'coldtarget'
         reference. Does not advance the episode."""
         opt = self._make_optimizer(target, target_fe, seg_seed)
         # Override the episode-state seeding _make_optimizer applies: run the
@@ -552,7 +556,6 @@ class TranslationEnv(gym.Env):
             "problem_ids": self.problem_ids,
             "suite": self.suite,
             "fe_multiplier": self.fe_multiplier,
-            "n_switches": self.n_switches,
             "n_individuals": self.n_individuals,
             "n_individuals_a": self.n_a,
             "n_individuals_b": self.n_b,

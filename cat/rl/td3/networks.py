@@ -9,7 +9,8 @@ across the board — its dimension depends on ``(target_algo, D, N)`` (see
 reuses the trick that makes the *state* encoder shape-agnostic: decode the
 action back into its structured per-algorithm fields (``build_state``, entirely
 parameter-free — pure reshape + denormalize + the static
-``CovFactorHead.assemble`` — so replaying an old, off-policy action through the
+``CovFactorHead.assemble`` or the computed CMA-ES prior of the stored source
+state — so replaying an old, off-policy action through the
 *current* decoder always reconstructs bit-identical fields, no staleness
 concern) and encode *that* with the target algorithm's own ``StateEncoder``,
 exactly like encoding a real state. The critic then combines the source state's
@@ -50,7 +51,7 @@ def _action_state(
     reconstruction is parameter-free, so it's safe regardless of which actor
     instance/weights are passed — an ``actor`` argument is only needed because
     ``build_state`` lives on an ``nn.Module`` decoder head)."""
-    specific = actor.translator.decoders[target_algo].build_state(action, ctx, batch.n)
+    specific = actor.translator.decoders[target_algo].build_state(action, ctx, batch)
     return CanonicalState(
         algo=target_algo,
         positions=batch.positions,

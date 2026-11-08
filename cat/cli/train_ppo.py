@@ -150,7 +150,7 @@ def main():
     envs = build_envs(args)
     print(
         f"PPO training {args.algo_a}<->{args.algo_b} | dims={args.dims} "
-        f"| {len(envs)} env(s) | n_switches={args.n_switches} | device={args.device}"
+        f"| {len(envs)} env(s) | device={args.device}"
     )
 
     ac = ActorCritic(

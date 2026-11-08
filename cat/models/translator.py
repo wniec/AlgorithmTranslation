@@ -66,7 +66,7 @@ class TranslatorPair(nn.Module):
     def decode(
         self, z: Latent, target_algo: str, shared: CanonicalState, ctx: NormContext
     ) -> CanonicalState:
-        specific = self.decoders[target_algo](z, shared.positions, ctx)
+        specific = self.decoders[target_algo](z, shared, ctx)
         return _with_specific(shared, target_algo, specific)
 
     def translate(

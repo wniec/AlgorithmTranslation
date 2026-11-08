@@ -1,11 +1,5 @@
 #!/bin/bash
 # Train the PSO->CMAES state translator with PPO on an HPC GPU node.
-#
-# Submit with:   mkdir -p logs && sbatch train.slurm
-# (the logs/ dir must exist BEFORE submit — SLURM opens --output/--error itself).
-#
-# Fill every <ADD> below — those are the names that vary per cluster
-# (partition/queue, account/grant, GPU type, module names, W&B key).
 
 #SBATCH --job-name=cat-ppo-pso-cmaes
 #SBATCH --partition=<ADD>              # queue/partition, e.g. plgrid-gpu-a100 / gpu
@@ -15,7 +9,7 @@
 #SBATCH --ntasks=1                     # one training process; parallelism is via --n-workers, not MPI
 #SBATCH --cpus-per-task=8              # 6 rollout workers + main + headroom; keep >= (--n-workers + 1)
 #SBATCH --mem=16G
-#SBATCH --time=12:00:00                # 1000 updates; adjust to your measured s/upd (watch the tqdm bar)
+#SBATCH --time=48:00:00                # 1000 updates; adjust to your measured s/upd (watch the tqdm bar)
 #SBATCH --output=logs/%x-%j.out
 #SBATCH --error=logs/%x-%j.err
 #SBATCH --mail-type=END,FAIL           # optional: drop these two lines if your cluster has no mail
@@ -28,9 +22,6 @@ cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
 mkdir -p logs models
 
 # --- environment -------------------------------------------------------- #
-# Load whatever your cluster uses to provide a CUDA runtime and Python/uv.
-module load <ADD>                      # e.g. CUDA/12.4.0  Python/3.11  (one line per module)
-# module load <ADD>
 
 # CRITICAL: pin BLAS to a single thread. The rollout workers run their own
 # CMA-ES eigendecompositions and must stay single-threaded, or 6 workers x
@@ -51,7 +42,7 @@ export WANDB_API_KEY=<ADD>             # or: export WANDB_MODE=offline  (then dr
 # (default), relative mode, reward normalization ON, no ELA, exploration kept
 # alive with a small entropy bonus. --n-workers matches cpus-per-task - 2.
 uv run train --wandb --reward-mode relative --lambda-cycle 0.0 PSO CMAES \
-  --dims 5 --n-switches 1 --fe-multiplier 1000 --switch-cdb 3.7 --updates 1000 \
+  --dims 5 --fe-multiplier 1000 --switch-cdb 3.7 --updates 1000 \
   --fixed-order --n-workers 6 --reward-seeds 4 --ent-coef 1e-3 \
   --seed "${SLURM_ARRAY_TASK_ID:-42}"
 

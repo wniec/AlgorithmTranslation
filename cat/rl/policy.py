@@ -228,7 +228,7 @@ class ActorCritic(nn.Module):
     def _assemble_native(
         self, action: Tensor, target: str, batch, ctx, n_target: int | None = None
     ) -> dict:
-        specific = self.translator.decoders[target].build_state(action, ctx, batch.n)
+        specific = self.translator.decoders[target].build_state(action, ctx, batch)
         tgt_state = CanonicalState(
             algo=target,
             positions=batch.positions,

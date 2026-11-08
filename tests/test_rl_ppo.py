@@ -21,7 +21,6 @@ def _envs():
             pids,
             IOHSuite(),
             fe_multiplier=200,
-            n_switches=3,
             n_individuals=12,
             seed=0,
         )
@@ -37,7 +36,6 @@ def _envs_independent_sizes():
             pids,
             IOHSuite(),
             fe_multiplier=200,
-            n_switches=3,
             n_individuals_a=8,
             n_individuals_b=20,
             seed=0,

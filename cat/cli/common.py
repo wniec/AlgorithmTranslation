@@ -25,7 +25,6 @@ def add_env_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--instances", type=int, nargs="+", default=[1, 2, 3])
     p.add_argument("--split", choices=["easy", "all"], default="easy")
     p.add_argument("--fe-multiplier", type=int, default=2000)
-    p.add_argument("--n-switches", type=int, default=6)
     p.add_argument(
         "--n-individuals",
         type=int,
@@ -50,13 +49,13 @@ def add_env_args(p: argparse.ArgumentParser) -> None:
         type=float,
         default=1.0,
         help="base of the switch-point log-FE warp: 1.0 (default) = plain "
-        "log-uniform; >1 concentrates switches earlier; 0<cdb<1 later.",
+        "log-uniform; >1 moves the switch earlier; 0<cdb<1 later.",
     )
     p.add_argument(
         "--fixed-order",
         action="store_true",
-        help="always start episodes with algo_a (A, B, A, ...); by default the "
-        "starting algorithm is drawn at random per episode",
+        help="always switch algo_a -> algo_b; by default each episode's "
+        "direction is drawn at random",
     )
     p.add_argument(
         "--endpoint-reward",
@@ -97,7 +96,9 @@ def add_env_args(p: argparse.ArgumentParser) -> None:
         "'noswitch' (default) baseline = the source optimizer continuing "
         "(signed switch-worthiness: + if the switch beats staying, - if worse); "
         "'absolute' baseline = 0 (raw improvement); 'relative' baseline = the "
-        "lossy default hand-off (translation quality); 'coldtarget' baseline = "
+        "hand-off available without a network (translation quality): the "
+        "computed warm start into CMA-ES, the lossy default otherwise; "
+        "'coldtarget' baseline = "
         "the target (second) optimizer run cold from the start (beat running "
         "the second algorithm alone). Pass a comma-separated list "
         "(e.g. 'noswitch,relative,coldtarget') to sum several modes' rewards; "
@@ -137,7 +138,6 @@ def build_envs(args) -> list[TranslationEnv]:
                 ids,
                 suite,
                 fe_multiplier=args.fe_multiplier,
-                n_switches=args.n_switches,
                 n_individuals=args.n_individuals,
                 n_individuals_a=args.n_individuals_a,
                 n_individuals_b=args.n_individuals_b,

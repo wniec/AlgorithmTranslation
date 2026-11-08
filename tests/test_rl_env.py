@@ -1,8 +1,6 @@
-"""TranslationEnv mechanics: episode length, observation structure, finite
+"""TranslationEnv mechanics: one switch per episode, observation structure, finite
 rewards, and seed determinism. Driven with a trivial 'lossy' action (carry only
 the shared population) so no policy is needed."""
-
-import itertools
 
 import numpy as np
 import pytest
@@ -11,7 +9,7 @@ from cat.rl.env import TranslationEnv, scaled_improvement
 from cat.suite import IOHSuite, build_problem_ids
 
 
-def _env(seed=0, n_switches=4):
+def _env(seed=0):
     pids = build_problem_ids({1, 2}, dims=[2], instances=[1])
     return TranslationEnv(
         "PSO",
@@ -19,7 +17,6 @@ def _env(seed=0, n_switches=4):
         pids,
         IOHSuite(),
         fe_multiplier=200,
-        n_switches=n_switches,
         n_individuals=12,
         seed=seed,
     )
@@ -46,26 +43,32 @@ def _run_episode(env):
     return rewards, steps
 
 
-def test_episode_runs_n_switches_steps():
-    env = _env(n_switches=4)
+def test_episode_is_a_single_switch():
+    env = _env()
     rewards, steps = _run_episode(env)
-    assert steps == 4
+    assert steps == 1
     assert all(np.isfinite(r) for r in rewards)
+    with pytest.raises(RuntimeError):
+        env.step({})
 
 
-def test_targets_alternate():
-    env = _env(n_switches=4)
+def test_switch_runs_target_to_end_of_budget():
+    env = _env()
     obs, _ = env.reset()
-    seq = [obs["target_algo"]]
-    done = False
-    while not done:
-        obs, _r, term, trunc, _ = env.step(_lossy_action(obs))
-        done = term or trunc
-        if not done:
-            seq.append(obs["target_algo"])
-    # PSO warmup -> first target CMAES, then alternating.
-    assert seq[0] == "CMAES"
-    assert all(a != b for a, b in itertools.pairwise(seq))
+    _obs, _r, term, _trunc, info = env.step(_lossy_action(obs))
+    assert term
+    assert info["n_fe"] >= env._max_fe - env.n_b
+
+
+def test_fixed_order_always_switches_a_to_b():
+    pids = build_problem_ids({1, 2}, dims=[2], instances=[1])
+    env = TranslationEnv(
+        "PSO", "CMAES", pids, IOHSuite(), fe_multiplier=200, n_individuals=12,
+        random_start=False, seed=0,
+    )
+    for _ in range(4):
+        obs, _ = env.reset()
+        assert (obs["source_algo"], obs["target_algo"]) == ("PSO", "CMAES")
 
 
 def test_seed_determinism():
@@ -74,24 +77,23 @@ def test_seed_determinism():
     assert r1 == r2
 
 
-def test_relative_reward_zero_for_lossy_action():
-    """In 'relative' mode the reward is improvement *over* the lossy default, so
-    driving the env with the lossy action itself must yield ~0 every step."""
+def test_relative_reward_zero_for_baseline_action():
+    """In 'relative' mode the reward is improvement *over* the network-free
+    hand-off, so driving the env with that hand-off must yield ~0 every step."""
     env = TranslationEnv(
         "PSO",
         "CMAES",
         build_problem_ids({1, 2}, dims=[2], instances=[1]),
         IOHSuite(),
         fe_multiplier=300,
-        n_switches=4,
         n_individuals=12,
         reward_mode="relative",
         seed=5,
     )
-    obs, _ = env.reset()
+    env.reset()
     done = False
     while not done:
-        obs, r, term, trunc, _ = env.step(_lossy_action(obs))
+        _obs, r, term, trunc, _ = env.step(env.relative_baseline_native())
         assert abs(r) < 1e-9
         done = term or trunc
 
@@ -108,7 +110,6 @@ def test_noswitch_reward_is_signed_over_source_continuing():
         build_problem_ids({1, 2}, dims=[2], instances=[1]),
         IOHSuite(),
         fe_multiplier=300,
-        n_switches=4,
         n_individuals=12,
         reward_mode="noswitch",
         seed=5,
@@ -149,7 +150,6 @@ def test_list_reward_mode_sums_components():
             build_problem_ids({1, 2}, dims=[2], instances=[1]),
             IOHSuite(),
             fe_multiplier=300,
-            n_switches=4,
             n_individuals=12,
             reward_mode=mode,
             seed=11,
@@ -192,7 +192,6 @@ def test_mixed_reward_is_noswitch_plus_relative():
             build_problem_ids({1, 2}, dims=[2], instances=[1]),
             IOHSuite(),
             fe_multiplier=300,
-            n_switches=4,
             n_individuals=12,
             reward_mode=mode,
             seed=7,
@@ -257,7 +256,7 @@ def test_scaled_improvement_bounds():
     assert 0.0 < scaled_improvement(10.0, 9.0, 5.0) < 1.0
 
 
-def _env_independent_sizes(seed=0, n_switches=4, n_a=8, n_b=20):
+def _env_independent_sizes(seed=0, n_a=8, n_b=20):
     pids = build_problem_ids({1, 2}, dims=[2], instances=[1])
     return TranslationEnv(
         "PSO",
@@ -265,7 +264,6 @@ def _env_independent_sizes(seed=0, n_switches=4, n_a=8, n_b=20):
         pids,
         IOHSuite(),
         fe_multiplier=200,
-        n_switches=n_switches,
         n_individuals_a=n_a,
         n_individuals_b=n_b,
         seed=seed,
@@ -290,7 +288,7 @@ def test_episode_runs_with_independent_population_sizes():
     with source_has_full_state() (see collect_rollout in cat/rl/ppo/rollout.py).
     Drive the env the same defensive way and confirm every completed step
     still yields a finite reward."""
-    env = _env_independent_sizes(n_switches=4, n_a=8, n_b=20)
+    env = _env_independent_sizes(n_a=8, n_b=20)
     obs, _ = env.reset()
     rewards = []
     done = False
@@ -325,21 +323,21 @@ def test_policy_action_native_matches_target_n():
 def test_aocc_is_default_and_bounded():
     """Default reward_measure is 'aocc'; the relative reward is then a difference
     of two AOCC scores, each in [0,1], so it stays in [-1, 1]. Driving with the
-    lossy action still gives ~0 (translated run == lossy baseline)."""
+    baseline action still gives ~0 (translated run == baseline run)."""
     env = TranslationEnv(
         "PSO", "CMAES",
         build_problem_ids({1, 2}, dims=[2], instances=[1]),
-        IOHSuite(), fe_multiplier=300, n_switches=4, n_individuals=12,
+        IOHSuite(), fe_multiplier=300, n_individuals=12,
         reward_mode="relative", seed=5,
     )
     assert env.reward_measure == "aocc"
     assert env.spec()["reward_measure"] == "aocc"
-    obs, _ = env.reset()
+    env.reset()
     done = False
     while not done:
-        obs, r, term, trunc, _ = env.step(_lossy_action(obs))
+        _obs, r, term, trunc, _ = env.step(env.relative_baseline_native())
         assert -1.0 - 1e-9 <= r <= 1.0 + 1e-9
-        assert abs(r) < 1e-9  # lossy action == lossy baseline -> zero every step
+        assert abs(r) < 1e-9  # baseline action == baseline run -> zero every step
         done = term or trunc
 
 
@@ -349,7 +347,7 @@ def test_aocc_rewards_faster_convergence_over_endpoint():
     env = TranslationEnv(
         "PSO", "CMAES",
         build_problem_ids({1}, dims=[2], instances=[1]),
-        IOHSuite(), fe_multiplier=300, n_switches=1, seed=0,
+        IOHSuite(), fe_multiplier=300, seed=0,
     )
     env.reset()
     env._optimum, prev_best = 0.0, 10.0
@@ -363,7 +361,7 @@ def test_aocc_rewards_faster_convergence_over_endpoint():
     )
 
 
-def _env_ela(seed=0, n_switches=1, **kw):
+def _env_ela(seed=0, **kw):
     pids = build_problem_ids({1, 2}, dims=[5], instances=[1])
     return TranslationEnv(
         "PSO",
@@ -371,7 +369,6 @@ def _env_ela(seed=0, n_switches=1, **kw):
         pids,
         IOHSuite(),
         fe_multiplier=400,
-        n_switches=n_switches,
         n_individuals=12,
         reward_mode="relative",
         use_ela=True,
@@ -403,7 +400,7 @@ def test_ela_skipped_on_terminal_observation():
     block is skipped (left zero) while progress channels stay valid."""
     from cat.suite.ela import ELA_DIM
 
-    env = _env_ela(n_switches=1)
+    env = _env_ela()
     obs, _ = env.reset()
     obs, _r, term, _trunc, _ = env.step(_lossy_action(obs))
     assert term

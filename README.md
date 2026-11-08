@@ -29,6 +29,14 @@ The archive is a distinct `POINT_SET` field type: the encoder pools it
 seeded from the carried population. Any pair can be translated
 (`PSO`/`CMAES`/`MADDE`).
 
+CMA-ES's search distribution is **computed** rather than decoded from scratch
+(`cat/models/prior.py`): the mean is CMA-ES's own weighted recombination of the
+source's best points (a swarm's personal bests, otherwise its population), and
+the covariance has the form of its rank-μ update, blended 10% with its isotropic
+part. Its decoder head only predicts a residual around that — a mean shift, a
+covariance factor (`--cov-rank`), a step-size multiplier and a blend shift, i.e.
+`(1 + rank)·D + 2` numbers — so a zero action reproduces the computed state.
+
 A `TranslatorPair` holds an encoder + decoder head per algorithm. Translating
 `A -> B` reuses A's population and only decodes B's specific fields. It is trained
 with three objectives (`cat/losses.py`):
@@ -82,17 +90,19 @@ learning algorithm. Each is a console script (see `[project.scripts]`), run with
 ```bash
 # on-policy, stochastic-action PPO
 uv run train PSO CMAES -d 2 3 5 --n-individuals 12 \
-    --n-switches 6 --fe-multiplier 2000 --updates 100 --rollout-steps 1024
+    --fe-multiplier 2000 --updates 100 --rollout-steps 1024
 
 # off-policy, deterministic-action TD3 (twin critics + replay buffer)
 uv run train-td3 PSO CMAES -d 2 3 5 --n-individuals 12 \
-    --n-switches 6 --fe-multiplier 2000 --updates 100 --rollout-steps 1024
+    --fe-multiplier 2000 --updates 100 --rollout-steps 1024
 ```
 
 Shared across both trainers:
 
 - **Environment** (`cat/rl/env.py`, a `gymnasium.Env`): one episode is a BBOB run
-  with log-sampled switch points; the observation is the source optimizer's
+  with a single hand-off at a log-sampled switch point (the target then runs to
+  the end of the budget; `--fixed-order` makes every switch `algo_a → algo_b`,
+  otherwise the direction is random per episode); the observation is the source optimizer's
   state, the action is the target optimizer's state (the translation). Each algo
   may run its own population size (`--n-individuals-a` / `--n-individuals-b`); the
   action is decoded onto the source's `N` and the assembled warm-start resized to
@@ -105,9 +115,10 @@ Shared across both trainers:
     optimizer simply continuing), and the reward is the *similarity* of the two,
     `−|Δ best| / gap` (0 = the switched trajectory matches no-switch exactly).
   - `absolute` — log-scaled best-so-far improvement over the segment.
-  - `relative` — log-scaled improvement over the lossy default hand-off. Because
-    each direction's reward is measured against *that direction's* own lossy
-    default, the two hand-off directions are comparable, so this mode also logs
+  - `relative` — log-scaled improvement over the hand-off available without a
+    network: the computed warm start into CMA-ES (see below), the lossy default
+    for other targets. Because each direction's reward is measured against *that
+    direction's* own baseline, the two hand-off directions are comparable, so this mode also logs
     a per-direction mean reward (`reward/PSO->CMAES`, `reward/CMAES->PSO`).
 
   `noswitch` and `relative` run an extra counterfactual optimizer per step
@@ -135,7 +146,7 @@ Shared across both trainers:
 sliding-window rollout buffer, with PPO value-clipping and a Huber value loss so
 a value-function spike can't swamp the policy gradient. Exploration is a learned
 Gaussian whose log-std is **per action segment per target algorithm** (e.g.
-CMA-ES's mean/evolution-paths, its covariance factor, and PSO's per-particle
+CMA-ES's mean shift, its covariance factor, and PSO's per-particle
 velocities each get their own std) — a single global scalar can't express the
 different natural scales of those fields. The log-std sits in its own optimizer
 param group at `lr × --std-lr-mult`, since one scalar needs a far larger step

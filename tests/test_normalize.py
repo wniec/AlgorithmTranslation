@@ -72,7 +72,6 @@ def _envs():
             pids,
             IOHSuite(),
             fe_multiplier=200,
-            n_switches=3,
             n_individuals=12,
             seed=0,
         )

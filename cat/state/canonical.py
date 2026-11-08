@@ -15,7 +15,7 @@ shape-agnostic ``n`` / ``d`` properties.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import torch
@@ -33,6 +33,9 @@ class CanonicalState:
     best_x: Tensor  # (..., D)
     best_y: Tensor  # (...,)
     specific: dict[str, Tensor]
+    # Side data that is neither translated nor serialized back to the optimizer
+    # (a swarm's ``pbest_y``, which ranks its personal bests).
+    aux: dict[str, Tensor] = field(default_factory=dict)
 
     @property
     def n(self) -> int:
@@ -54,6 +57,7 @@ class CanonicalState:
             best_x=self.best_x.to(device),
             best_y=self.best_y.to(device),
             specific={k: v.to(device) for k, v in self.specific.items()},
+            aux={k: v.to(device) for k, v in self.aux.items()},
         )
 
     def index(self, i: int) -> CanonicalState:
@@ -65,6 +69,7 @@ class CanonicalState:
             best_x=self.best_x[i],
             best_y=self.best_y[i],
             specific={k: v[i] for k, v in self.specific.items()},
+            aux={k: v[i] for k, v in self.aux.items()},
         )
 
     def detach_clone(self) -> CanonicalState:
@@ -75,6 +80,7 @@ class CanonicalState:
             best_x=self.best_x.detach().clone(),
             best_y=self.best_y.detach().clone(),
             specific={k: v.detach().clone() for k, v in self.specific.items()},
+            aux={k: v.detach().clone() for k, v in self.aux.items()},
         )
 
 
@@ -159,7 +165,14 @@ def to_canonical(algo: str, native: dict, device="cpu") -> CanonicalState:
         m_cap = max(1, int(round(ARATE * positions.shape[0])))
         specific["archive"] = _resize_point_set(specific["archive"], m_cap, positions)
 
-    return CanonicalState(algo, positions, values, best_x, best_y, specific)
+    # A swarm's personal-best values rank its personal bests (cat/models/prior.py).
+    aux: dict[str, Tensor] = {}
+    if "pbest_x" in specific and native.get("p_y") is not None:
+        pbest_y = _as_tensor(native["p_y"], device).reshape(-1)
+        if pbest_y.shape[0] == specific["pbest_x"].shape[0]:
+            aux["pbest_y"] = pbest_y
+
+    return CanonicalState(algo, positions, values, best_x, best_y, specific, aux)
 
 
 def _resize_point_set(points: Tensor, m_cap: int, positions: Tensor) -> Tensor:
@@ -235,7 +248,10 @@ def resample_population(
         )
         positions[n:] = positions[n:] + 0.1 * std * noise
 
-    return CanonicalState(state.algo, positions, values, state.best_x, state.best_y, specific)
+    aux = {name: val[idx] for name, val in state.aux.items()}
+    return CanonicalState(
+        state.algo, positions, values, state.best_x, state.best_y, specific, aux
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -323,4 +339,5 @@ def collate(states: list[CanonicalState]) -> CanonicalState:
         specific={
             k: torch.stack([s.specific[k] for s in states]) for k in states[0].specific
         },
+        aux={k: torch.stack([s.aux[k] for s in states]) for k in states[0].aux},
     )

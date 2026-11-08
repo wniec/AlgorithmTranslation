@@ -14,6 +14,7 @@ import copy
 import math
 import multiprocessing as mp
 import os
+import pickle
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 
@@ -146,7 +147,7 @@ def collect_rollout(
     The third return value maps each switch type (``"<source>-><target>"``) to
     its raw per-step rewards, for every reward mode whose baseline is comparable
     across the hand-off directions (each a log-scaled improvement over that same
-    direction's own baseline: the lossy default for ``relative``, the source
+    direction's own baseline: the network-free hand-off for ``relative``, the source
     continuing for ``noswitch``, the cold target run for ``coldtarget``). A pure
     ``absolute`` reward is a raw, scale-varying improvement, so it is not broken
     out per direction (``env.logs_per_direction``). When the reward sums several
@@ -225,7 +226,15 @@ def _worker_collect(payload):
             ac, _WORKER["envs"], cfg, _WORKER["ep_rng"], ret_rms, obs_rms,
             n_steps, "cpu", frozen=True,
         )
-    return trs, ep_returns, dict(switch_rewards), raw_ctxs, disc
+    # Plain pickle copies tensor data inline. Returning the objects directly
+    # would let torch's ForkingPickler hand each tensor over as its own
+    # shared-memory mapping; the buffer keeps thousands of transitions alive,
+    # so those mappings pile up until vm.max_map_count (65530) is hit and the
+    # pool dies with "unable to mmap ... Cannot allocate memory".
+    return pickle.dumps(
+        (trs, ep_returns, dict(switch_rewards), raw_ctxs, disc),
+        protocol=pickle.HIGHEST_PROTOCOL,
+    )
 
 
 def collect_rollout_parallel(
@@ -244,7 +253,7 @@ def collect_rollout_parallel(
     obs_snap = copy.deepcopy(obs_rms)
     ret_snap = copy.deepcopy(ret_rms)
     payload = (state_dict, obs_snap, ret_snap, per)
-    results = list(executor.map(_worker_collect, [payload] * n))
+    results = [pickle.loads(b) for b in executor.map(_worker_collect, [payload] * n)]
 
     transitions: list[Transition] = []
     ep_returns: list[float] = []
