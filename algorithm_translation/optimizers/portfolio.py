@@ -1,8 +1,11 @@
 """Portfolio of available sub-optimizers.
 
-Add new algorithm classes here and they become selectable by name in train_ppo.py
-/ evaluate.py. A new optimizer also needs a ``StateSpec`` in
-``algorithm_translation/state/schema.py`` before it can participate in translation.
+Add new algorithm classes here. To be selectable in the trainers and
+evaluators (``uv run train`` / ``train-td3`` / ``eval`` / ``eval-switch``), an
+optimizer also needs a ``StateSpec`` in ``algorithm_translation/state/schema.py``;
+the CLIs only offer optimizers that have one (see ``cli.ALGO_CHOICES``). IPSO is
+kept for standalone use only: it restarts from a single particle on warm start
+and grows its swarm, so it has no fixed-population state to translate.
 """
 
 from algorithm_translation.optimizers.DE import MADDE

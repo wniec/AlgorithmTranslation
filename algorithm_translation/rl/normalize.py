@@ -79,9 +79,9 @@ def normalize_rewards(
     """Scale one episode's rewards by the running std of the discounted return
     (the standard PPO/``VecNormalize`` trick; see module docstring). Divides by
     std only — no mean-centering, since the raw reward's sign/magnitude carries
-    real signal (e.g. the default ``noswitch`` env reward is one-sided, always
-    <= 0) that a value/Q function should learn to predict, not have subtracted
-    away."""
+    real signal (e.g. a ``noswitch`` reward is negative exactly when switching
+    did worse than staying) that a value/Q function should learn to predict,
+    not have subtracted away."""
     discounted = discounted_returns(rewards, gamma)
     ret_rms.update(np.asarray(discounted)[:, None])
     return scale_by_ret_std(rewards, ret_rms)

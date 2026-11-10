@@ -8,8 +8,8 @@ in *raw* units (no normalization) so the round-trip is lossless; any
 standardization happens inside the model encoder.
 
 A single state has no batch dimension: ``positions`` is ``(N, D)``,
-``best_x`` is ``(D,)``, scalars are 0-dim. Batched states (added by the dataset
-collation) carry a leading batch dimension and are handled transparently by the
+``best_x`` is ``(D,)``, scalars are 0-dim. Batched states (built by ``collate``)
+carry a leading batch dimension and are handled transparently by the
 shape-agnostic ``n`` / ``d`` properties.
 """
 

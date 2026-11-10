@@ -1,6 +1,6 @@
 """Train the state translator with TD3 (off-policy reinforcement learning).
 
-    python train_td3.py PSO CMAES [options]
+    uv run train-td3 PSO CMAES [options]
 
 Same environment, same continuous action (the target optimizer's full decoded
 warm-start) and the same set-equivariant translator as train_ppo.py — but
@@ -8,11 +8,11 @@ trained off-policy: a deterministic actor (the translator's mean action, no
 learned std) explores via Gaussian noise added in action space, transitions go
 into a replay buffer, and twin critics (Q1, Q2) are trained via Double-Q-style
 target computation with delayed, Polyak-averaged target networks (see
-algorithm_translation/rl/td3.py for the full design rationale, in particular how the critic
-handles the action's variable dimensionality). Shared CLI/env-building logic
-lives in algorithm_translation/cli/common.py.
+algorithm_translation/rl/td3/networks.py for the full design rationale, in
+particular how the critic handles the action's variable dimensionality). Shared
+CLI/env-building logic lives in algorithm_translation/cli/common.py.
 
-Saves a checkpoint compatible with evaluate.py (`models/<A>_<B>_td3.pt`).
+Saves a checkpoint compatible with `uv run eval` (`models/<A>_<B>_td3.pt`).
 """
 
 from __future__ import annotations

@@ -48,6 +48,15 @@ def test_loio_overlapping_instances_rejected():
         scenario_split("loio", [2], train_instances=[1, 2], test_instances=[2, 3])
 
 
+def test_cli_only_offers_translatable_optimizers():
+    from algorithm_translation.cli import ALGO_CHOICES
+    from algorithm_translation.state.schema import has_spec
+
+    assert "IPSO" not in ALGO_CHOICES  # in the portfolio, but no StateSpec
+    assert {"PSO", "CMAES", "MADDE", "BOBYQA"} <= set(ALGO_CHOICES)
+    assert all(has_spec(a) for a in ALGO_CHOICES)
+
+
 def test_eval_drops_training_problems():
     p = argparse.ArgumentParser()
     add_scenario_args(p, for_eval=True)

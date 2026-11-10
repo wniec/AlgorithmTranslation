@@ -87,7 +87,8 @@ def _collect_episodes(
         while not done:
             if not env.source_has_full_state():
                 break  # degenerate source; abandon this episode
-            # Critic side-input: progress scalars.
+            # Critic side-input: the env context (progress scalars, plus the
+            # scale/ELA features when enabled).
             raw_ctx = np.asarray(obs["context"], dtype=np.float32)
             if obs_rms is not None:
                 if frozen:

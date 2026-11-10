@@ -28,10 +28,10 @@ class Struct(Enum):
     """How a field's shape relates to population size N and dimension D."""
 
     PER_PARTICLE_PER_DIM = "ppd"  # (N, D) e.g. velocities, personal-best positions
-    PER_PARTICLE = "pp"  # (N,)   e.g. personal-best values
+    PER_PARTICLE = "pp"  # (N,)   e.g. the population's objective values
     PER_DIM = "pd"  # (D,)   e.g. distribution mean, evolution paths
     MATRIX = "mat"  # (D, D) e.g. covariance matrix
-    SCALAR = "scalar"  # ()     e.g. step-size sigma
+    SCALAR = "scalar"  # ()     e.g. BOBYQA's trust-region radius
     POINT_SET = "set"  # (M, D) a variable-size set of points, M independent of N
     #                          (e.g. a DE external archive). M is fixed per (D, N)
     #                          group (capacity = round(ARATE * N)).
@@ -39,7 +39,9 @@ class Struct(Enum):
 
 class Constraint(Enum):
     FREE = "free"
-    POSITIVE = "positive"  # decoded through softplus; compared in log-space
+    # Documents that the field must stay positive. SCALAR fields are decoded in
+    # log-space (NormContext.denormalize applies exp), which guarantees it.
+    POSITIVE = "positive"
 
 
 @dataclass(frozen=True)
@@ -148,6 +150,11 @@ _SPECS: dict[str, StateSpec] = {
     "MADDE": MADDE_SPEC,
     "BOBYQA": BOBYQA_SPEC,
 }
+
+
+def has_spec(algo: str) -> bool:
+    """Whether ``algo`` has a ``StateSpec`` (i.e. can take part in translation)."""
+    return algo in _SPECS
 
 
 def get_spec(algo: str) -> StateSpec:

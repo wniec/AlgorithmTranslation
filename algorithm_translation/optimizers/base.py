@@ -118,8 +118,9 @@ def get_checkpoints(
     cdb == 1.0  -> uniform spacing
     cdb > 1.0   -> early checkpoints are shorter (exponential growth)
 
-    Retained for reference; the translation study uses ``sample_switch_points``
-    instead so switch positions are randomized per problem rather than fixed.
+    Used by ``eval-switch --switch-mode cdb`` for deterministic checkpoints;
+    training and ``--switch-mode random`` use ``sample_switch_points`` instead,
+    so switch positions are randomized per problem rather than fixed.
     """
     ratios = np.cumprod(np.full(n_checkpoints, cdb))
     ratios = np.cumsum(ratios / ratios.sum())

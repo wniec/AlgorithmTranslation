@@ -22,7 +22,7 @@ from __future__ import annotations
 import numpy as np
 
 # Log-scaling floor. reward = log(scaled + eps) - log(eps) = log(1 + scaled/eps)
-# maps a [0, 1] scaled improvement to [0, log(1 + 1/eps)] (~6.9 for eps=1e-3),
+# maps a [0, 1] scaled improvement to [0, log(1 + 1/eps)] (~9.2 for eps=1e-4),
 # with 0 improvement -> 0. Log scaling emphasizes the small improvements that
 # dominate late-stage refinement near the optimum.
 _REWARD_EPS = 1e-4

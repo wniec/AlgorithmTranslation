@@ -22,7 +22,7 @@ _ID_PATTERN = re.compile(r"^bbob_f(\d+)_i(\d+)_d(\d+)$")
 
 
 class IOHProblemWrapper:
-    """Wraps an IOH BBOB problem with the interface expected by the collector."""
+    """Wraps an IOH BBOB problem with the interface the optimizers and env expect."""
 
     __slots__ = ("_p",)
 

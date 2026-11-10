@@ -30,10 +30,11 @@ class PPOConfig:
     # looser, decoupled window).
     vf_clip: float | None = None
     lr: float = 3e-4
-    # log_std is a single global scalar (see ActorCritic.log_std): at the shared
-    # network lr it can only drift by ~lr per opt.step(), which is too slow to
-    # track a moving optimum over the handful of steps in one update. Give it
-    # its own Adam param group at lr * std_lr_mult instead.
+    # log_std (see ActorCritic.log_std) is a handful of per-segment base
+    # scalars: at the shared network lr they can only drift by ~lr per
+    # opt.step(), which is too slow to track a moving optimum over the handful
+    # of steps in one update. Give them their own Adam param group at
+    # lr * std_lr_mult instead.
     std_lr_mult: float = 20.0
     max_grad_norm: float = 1.0
     # Sliding-window rollout buffer: each update collects ~rollout_steps fresh

@@ -43,8 +43,9 @@ def update(
     ``(source_algo, D, N)`` group of the replay buffer — same grouping trick
     PPO uses, since the encoders need uniform shapes within a batch, and
     since the target algorithm is a deterministic function of the source
-    algorithm here too (env alternates strictly between ``algo_a``/``algo_b``,
-    each with its own fixed configured population size), every transition's
+    algorithm here too (each episode's single switch goes to the other
+    algorithm of the pair, each with its own fixed configured population size),
+    every transition's
     ``next_state`` in a group shares the same algo/D/N as well. The actor and
     both target networks are updated only every ``policy_freq`` critic steps
     (TD3's delayed policy update)."""

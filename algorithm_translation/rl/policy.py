@@ -4,9 +4,11 @@ The **actor** is the existing set-equivariant ``TranslatorPair``: it encodes the
 source optimizer's state and decodes the *mean* action (the target's specific
 fields, in normalized coordinates). A diagonal Gaussian with a learnable
 per-segment log-std (see ``ActorCritic.log_std``) turns that mean into a
-stochastic policy; the covariance action is sampled in factor space so it stays
-PSD. The **critic** is a small MLP on the
-encoder's global latent plus the env context vector.
+stochastic policy, its std modulated per dimension by a bounded,
+population-conditioned residual (``ActorCritic.action_std``); the covariance
+action is sampled in factor space so it stays PSD. The **critic** has its own
+per-algorithm encoders (decoupled from the actor's) and an MLP over their
+global latent plus the env context vector.
 
 The same network thus serves deterministic translation (the mean, used at
 evaluation) and RL (sampled actions), with the heads' ``action_mean`` /
@@ -36,8 +38,10 @@ from algorithm_translation.state.canonical import (
 )
 
 PROGRESS_DIM = 2
-# The critic's side-input: progress scalars only. (Only the critic sees these;
-# the actor/translator stays a function of the optimizer state alone.)
+# Default size of the critic's side-input: the 2 progress scalars. The env
+# widens it with --scale-feature / --use-ela (ActorCritic takes ``context_dim``).
+# Only the critic sees these; the actor/translator stays a function of the
+# optimizer state alone.
 CONTEXT_DIM = PROGRESS_DIM
 
 

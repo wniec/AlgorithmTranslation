@@ -1,6 +1,6 @@
 """Evaluate a trained translator: does the learned hand-off beat the default?
 
-    python evaluate.py PSO CMAES [options]
+    uv run eval PSO CMAES --model models/PSO_CMAES_ppo.pt [options]
 
 For each BBOB **test** problem we warm up the *source* optimizer to build a
 genuine internal state, then switch to the *target* optimizer for the remaining
@@ -24,6 +24,7 @@ import copy
 import numpy as np
 import torch
 
+from algorithm_translation.cli import ALGO_CHOICES
 from algorithm_translation.cli.scenario import add_scenario_args, resolve_test_ids
 from algorithm_translation.models.norm import NormContext
 from algorithm_translation.optimizers.base import sample_switch_points
@@ -267,12 +268,12 @@ def evaluate_heldout(
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("algo_a", choices=sorted(PORTFOLIO))
-    p.add_argument("algo_b", choices=sorted(PORTFOLIO))
+    p.add_argument("algo_a", choices=ALGO_CHOICES)
+    p.add_argument("algo_b", choices=ALGO_CHOICES)
     p.add_argument(
         "--model",
         default=None,
-        help="translator checkpoint (default models/<A>_<B>.pt)",
+        help="translator checkpoint (default models/<A>_<B>_ppo.pt)",
     )
     add_scenario_args(p, for_eval=True)
     p.add_argument("--fe-multiplier", type=int, default=2000)
@@ -287,7 +288,7 @@ def parse_args():
 
 def main():
     args = parse_args()
-    model = args.model or f"models/{args.algo_a}_{args.algo_b}.pt"
+    model = args.model or f"models/{args.algo_a}_{args.algo_b}_ppo.pt"
     pair = load_translator(model, device=args.device)
     print(f"loaded translator {pair.algo_a}<->{pair.algo_b} from {model}")
 

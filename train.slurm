@@ -1,12 +1,12 @@
 #!/bin/bash
-# Train the PSO->CMAES state translator with PPO on an HPC GPU node.
+# Train the PSO->CMAES state translator with PPO on an HPC node (rollouts run on CPU workers).
 
 #SBATCH --job-name=algotrans-ppo-pso-cmaes
 #SBATCH --partition=<ADD>              # queue/partition, e.g. plgrid-gpu-a100 / gpu
 #SBATCH --account=<ADD>                # grant / project account to charge
 #SBATCH --nodes=1
 #SBATCH --ntasks=1                     # one training process; parallelism is via --n-workers, not MPI
-#SBATCH --cpus-per-task=16              # 6 rollout workers + main + headroom; keep >= (--n-workers + 1)
+#SBATCH --cpus-per-task=16              # 14 rollout workers + main + headroom; keep >= (--n-workers + 1)
 #SBATCH --mem=16G
 #SBATCH --time=48:00:00                # 1000 updates; adjust to your measured s/upd (watch the tqdm bar)
 #SBATCH --output=logs/%x-%j.out
@@ -23,7 +23,7 @@ mkdir -p logs models
 # --- environment -------------------------------------------------------- #
 
 # CRITICAL: pin BLAS to a single thread. The rollout workers run their own
-# CMA-ES eigendecompositions and must stay single-threaded, or 6 workers x
+# CMA-ES eigendecompositions and must stay single-threaded, or N workers x
 # (cpus) threads oversubscribes the node. SLURM may export OMP_NUM_THREADS
 # from --cpus-per-task, so set these explicitly here rather than relying on
 # the in-code setdefault.

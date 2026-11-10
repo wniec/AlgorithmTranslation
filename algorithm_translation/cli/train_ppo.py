@@ -1,20 +1,20 @@
 """Train the state translator with PPO (reinforcement learning).
 
-    python train_ppo.py PSO CMAES [options]
+    uv run train PSO CMAES [options]
 
-Each episode is a BBOB run that switches between the two named algorithms at
-log-uniformly sampled points; at every switch the policy (the set-equivariant
+Each episode is a BBOB run with a single switch between the two named
+algorithms at a log-sampled point; at the switch the policy (the set-equivariant
 translator) maps the source optimizer's internal state into the target's. The
-reward is the true downstream best-so-far improvement over the next segment, so
-the network learns useful hand-offs by optimizing the real (non-differentiable)
-objective directly.
+reward scores the target's run over the rest of the budget (AOCC by default)
+against a baseline chosen by --reward-mode, so the network learns useful
+hand-offs by optimizing the real (non-differentiable) objective directly.
 
 PPO's action is a stochastic Gaussian over the translator's decoded fields,
 trained on-policy. See train_td3.py for an off-policy alternative that trains
 the same continuous action deterministically with twin critics + a replay
 buffer; shared CLI/env-building logic lives in algorithm_translation/cli/common.py.
 
-Saves a checkpoint compatible with evaluate.py (`models/<A>_<B>_ppo.pt`).
+Saves a checkpoint compatible with `uv run eval` (`models/<A>_<B>_ppo.pt`).
 """
 
 from __future__ import annotations
@@ -56,8 +56,8 @@ def parse_args():
         type=float,
         default=30.0,
         help="log_std gets its own Adam param group at lr * std-lr-mult, since "
-        "it's a single global scalar that needs a much bigger step than the "
-        "rest of the network to track its optimum in a reasonable number of updates",
+        "its few per-segment base scalars need a much bigger step than the "
+        "rest of the network to track their optimum in a reasonable number of updates",
     )
     p.add_argument(
         "--resample-seed",

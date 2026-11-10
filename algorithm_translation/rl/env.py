@@ -14,10 +14,10 @@ single step.
   side-input to the critic.
 * **action** — the target's full native warm-start dict (shared population +
   decoded specific fields), assembled by the policy from its decoded state.
-* **reward** — every mode is ``log_scale(translated improvement) -
-  log_scale(baseline improvement)``, differing only in the baseline:
-    - ``absolute``: baseline 0 — log-scaled best-so-far improvement over the
-      segment.
+* **reward** — every mode is ``score(translated run) - score(baseline run)``,
+  each run's segment scored by ``reward_measure`` (below), differing only in
+  the baseline:
+    - ``absolute``: baseline 0 — the translated run's own segment score.
     - ``relative``: baseline = the hand-off available without a network, running
       the same target: the *computed* warm start for switches into CMA-ES
       (``algorithm_translation/models/prior.py``), the *lossy default* (shared population only) for
@@ -47,8 +47,9 @@ single step.
   baseline subtraction and mode machinery are identical for both.
 
 The observation/action spaces are declared for completeness but the env is meant
-to be driven by the custom loop in ``algorithm_translation.rl.ppo`` (which reads the structured
-objects), not by a generic flat-vector agent.
+to be driven by the custom loops in ``algorithm_translation.rl.ppo`` /
+``algorithm_translation.rl.td3`` (which read the structured objects), not by a
+generic flat-vector agent.
 """
 
 from __future__ import annotations
@@ -173,7 +174,7 @@ class TranslationEnv(gym.Env):
         self._seed = seed
         self.dim = self._parse_dim(problem_ids[0])
 
-        # Declared for completeness; the custom PPO loop reads structured objects.
+        # Declared for completeness; the custom RL loops read structured objects.
         self.observation_space = spaces.Dict(
             {
                 "context": spaces.Box(
@@ -223,6 +224,7 @@ class TranslationEnv(gym.Env):
         self._range = 1.0
         self._optimum = None  # global optimum value when the suite exposes it (for AOCC)
         self._switch_fe = None
+        self._seg_seed = None  # optimizer seed for this episode's post-switch runs
         self._done = False
         self._src_native = None
         self._src_algo = None
@@ -319,6 +321,9 @@ class TranslationEnv(gym.Env):
 
         base = (self._seed * 1_000_003 + self._problem_idx) % (2**31)
         sw_rng = np.random.default_rng(base)
+        # Post-switch runs (translated + counterfactual baselines) get their own
+        # per-episode seed, distinct from the warmup's ``base + 1``.
+        self._seg_seed = int(np.random.SeedSequence([base, 1]).generate_state(1)[0] % (2**31))
         self._problem_idx += 1
 
         # Which algorithm does the cold warmup, i.e. which direction the single
@@ -401,7 +406,7 @@ class TranslationEnv(gym.Env):
         # outcome (best-so-far, FE count); the other K-1 translated
         # runs serve the reward estimate only, like the counterfactuals — so
         # reward_seeds == 1 reproduces the previous single-sample behaviour.
-        base_seg_seed = self._seed + 1
+        base_seg_seed = self._seg_seed
         translated_terms: list[float] = []
         advance_opt = advance_result = None
         for j in range(self.reward_seeds):

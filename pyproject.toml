@@ -1,7 +1,7 @@
 [project]
 name = "algorithm-translation"
 version = "0.1.0"
-description = "Learned translation of internal state between metaheuristic optimizers (PSO, CMA-ES) on COCO-BBOB"
+description = "Learned translation of internal state between metaheuristic optimizers (PSO, CMA-ES, MadDE, BOBYQA) on COCO-BBOB"
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "ioh>=0.3.0",

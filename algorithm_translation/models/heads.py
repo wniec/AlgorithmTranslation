@@ -1,15 +1,16 @@
 """Per-algorithm decoder head.
 
-Consumes the shared latent ``z`` and the *target* shared population (positions +
-normalization context) and emits that algorithm's specific fields in raw units:
+Consumes the shared latent ``z`` and the shared population being handed over
+(positions + normalization context) and emits that algorithm's specific fields in raw units:
 
-* PER_DIM (mean, evolution paths): linear read-out per dimension-token.
+* PER_DIM (e.g. BOBYQA's model gradient): linear read-out per dimension-token.
 * PER_PARTICLE_PER_DIM (velocity, personal-best positions): a per-cell MLP whose
   query for particle *i*, dimension *j* is ``concat(dim_token_j, normalized
   position x_ij)`` — so generated velocities are grounded in the actual swarm
   and the head stays equivariant over both particles and coordinates.
 * MATRIX (covariance): ``CovFactorHead`` -> PSD by construction.
-* SCALAR (sigma): linear read-out from the global vector, decoded in log-space
+* SCALAR (e.g. BOBYQA's trust-region radius): linear read-out from the global
+  vector, decoded in log-space
   (always positive after denormalization).
 
 CMA-ES is the exception: its distribution is computed from the source's points

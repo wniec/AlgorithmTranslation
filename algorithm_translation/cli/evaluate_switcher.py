@@ -1,6 +1,6 @@
-"""Benchmark a translating switcher over the whole BBOB suite.
+"""Benchmark a translating switcher on held-out BBOB problems.
 
-    python evaluate_switcher.py PSO CMAES --model models/PSO_CMAES_ppo.pt \
+    uv run eval-switch PSO CMAES --model models/PSO_CMAES_ppo.pt \
         --n-switches 6 --fe-multiplier 2000 --cdb 1.0 --switch-mode random
 
 An *agent* runs each BBOB problem for the full FE budget while **randomly
@@ -30,7 +30,7 @@ precision ``best_y - optimum`` is clipped to [1e-8, 1e8], log10-normalized, and
 ``1 - that`` is averaged over the FE budget. Methods are ranked per run by AOCC
 (mean rank reported, lower = better) with head-to-head AOCC win rates. **ERT**
 (Expected Running Time) is also reported per method, pooled over all runs, across
-a fixed precision-target ladder (1e-2, 1e-3, ..., 1e-7).
+a fixed precision-target ladder (1e-3, 1e-4, ..., 1e-7).
 
 Switch points come from one of two modes (``--switch-mode``), both honoring the
 concentration-of-decision-boundaries knob ``--cdb``:
@@ -49,6 +49,7 @@ import argparse
 import numpy as np
 import torch
 
+from algorithm_translation.cli import ALGO_CHOICES
 from algorithm_translation.cli.scenario import exclude_train_ids
 from algorithm_translation.models.norm import NormContext
 from algorithm_translation.optimizers.base import get_checkpoints, sample_switch_points
@@ -129,7 +130,7 @@ def _shared(native: dict) -> dict:
 _AOCC_LB, _AOCC_UB = 1e-8, 1e8
 _AOCC_LOG_LB, _AOCC_LOG_UB = -8.0, 8.0
 
-# Fixed precision-target ladder ERT is always reported against (1e-2 down to 1e-7).
+# Fixed precision-target ladder ERT is always reported against (1e-3 down to 1e-7).
 _ERT_TARGETS = (1e-3, 1e-4, 1e-5, 1e-6, 1e-7)
 
 
@@ -460,10 +461,10 @@ def parse_args():
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("algo_a", choices=sorted(PORTFOLIO))
-    p.add_argument("algo_b", choices=sorted(PORTFOLIO))
+    p.add_argument("algo_a", choices=ALGO_CHOICES)
+    p.add_argument("algo_b", choices=ALGO_CHOICES)
     p.add_argument(
-        "--model", default=None, help="translator checkpoint (default models/<A>_<B>.pt)"
+        "--model", default=None, help="translator checkpoint (default models/<A>_<B>_ppo.pt)"
     )
     p.add_argument("-d", "--dims", type=int, nargs="+", default=None,
                    help=f"BBOB dimensions (available: {ALL_DIMS}; default: the "
@@ -495,7 +496,7 @@ def parse_args():
 
 def main():
     args = parse_args()
-    model = args.model or f"models/{args.algo_a}_{args.algo_b}.pt"
+    model = args.model or f"models/{args.algo_a}_{args.algo_b}_ppo.pt"
     pair = load_translator(model, device=args.device)
     print(f"loaded translator {pair.algo_a}<->{pair.algo_b} from {model}")
 

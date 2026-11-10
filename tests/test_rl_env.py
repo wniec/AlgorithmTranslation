@@ -77,6 +77,20 @@ def test_seed_determinism():
     assert r1 == r2
 
 
+def test_post_switch_seed_varies_per_episode():
+    """Each episode's post-switch optimizer runs get a fresh seed (not one
+    fixed seed per env), while staying reproducible for a given env seed."""
+    env = _env(seed=3)
+    seeds = []
+    for _ in range(3):
+        env.reset()
+        seeds.append(env._seg_seed)
+    assert len(set(seeds)) == 3
+    again = _env(seed=3)
+    again.reset()
+    assert again._seg_seed == seeds[0]
+
+
 def test_relative_reward_zero_for_baseline_action():
     """In 'relative' mode the reward is improvement *over* the network-free
     hand-off, so driving the env with that hand-off must yield ~0 every step."""

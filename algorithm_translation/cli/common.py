@@ -14,17 +14,17 @@ from collections import defaultdict
 import torch
 from tqdm import tqdm
 
+from algorithm_translation.cli import ALGO_CHOICES
 from algorithm_translation.cli.evaluate import evaluate_heldout
 from algorithm_translation.cli.scenario import add_scenario_args, split_from_args
-from algorithm_translation.optimizers.portfolio import PORTFOLIO
 from algorithm_translation.rl.env import TranslationEnv
 from algorithm_translation.suite import IOHSuite
 from algorithm_translation.tracking import WandbLogger
 
 
 def add_algo_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument("algo_a", choices=sorted(PORTFOLIO))
-    p.add_argument("algo_b", choices=sorted(PORTFOLIO))
+    p.add_argument("algo_a", choices=ALGO_CHOICES)
+    p.add_argument("algo_b", choices=ALGO_CHOICES)
 
 
 def add_env_args(p: argparse.ArgumentParser) -> None:
@@ -97,10 +97,12 @@ def add_env_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--reward-mode",
         default="noswitch",
-        help="every mode is log_scale(translated) - log_scale(baseline). "
+        help="every mode is score(translated) - score(baseline), each run's "
+        "segment scored by AOCC (or --endpoint-reward). "
         "'noswitch' (default) baseline = the source optimizer continuing "
         "(signed switch-worthiness: + if the switch beats staying, - if worse); "
-        "'absolute' baseline = 0 (raw improvement); 'relative' baseline = the "
+        "'absolute' baseline = 0 (the translated run's own score); "
+        "'relative' baseline = the "
         "hand-off available without a network (translation quality): the "
         "computed warm start into CMA-ES, the lossy default otherwise; "
         "'coldtarget' baseline = "

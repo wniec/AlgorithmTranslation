@@ -20,14 +20,16 @@ state splits into:
 - **specific** fields — the algorithm's own machinery, which a bidirectional
   translator learns to map between algorithms.
 
-Three optimizers are implemented (`algorithm_translation/optimizers/`): **PSO** (per-particle
-velocities + personal bests), **CMA-ES** (mean + covariance + step-size +
-evolution paths), and **MadDE** (Biswas et al., CEC 2021 — a self-adaptive DE
-whose translated field is its **external archive**, a variable-size *point-set*).
+Translatable optimizers (`algorithm_translation/optimizers/`): **PSO** and its
+variants `SPSO`/`SPSOL`/`CPSO` (per-particle velocities + personal bests),
+**CMA-ES** (mean + covariance + step-size + evolution paths), **MadDE** (Biswas
+et al., CEC 2021 — a self-adaptive DE whose translated field is its **external
+archive**, a variable-size *point-set*), and **BOBYQA** (a model-based trust
+region, translating its quadratic model's gradient/Hessian and its radius).
 The archive is a distinct `POINT_SET` field type: the encoder pools it
 (set-equivariant), and the decoder regenerates it as `round(2.3·N)` points
-seeded from the carried population. Any pair can be translated
-(`PSO`/`CMAES`/`MADDE`).
+seeded from the carried population. Any pair can be translated. (`IPSO` is in
+the portfolio but not translatable: it restarts from one particle and grows.)
 
 CMA-ES's search distribution is **computed** rather than decoded from scratch
 (`algorithm_translation/models/prior.py`): the mean is CMA-ES's own weighted recombination of the
@@ -100,27 +102,29 @@ Shared across both trainers:
   may run its own population size (`--n-individuals-a` / `--n-individuals-b`); the
   action is decoded onto the source's `N` and the assembled warm-start resized to
   the target's, so the action dimension stays a pure function of `(algo, D, N)`.
-- **Reward** (`--reward-mode`, all scaled by the **initial gap to the global
-  optimum** — warmup best-so-far minus the BBOB optimum):
-  - `noswitch` **(default)** — the translation should make the switch
-    *invisible*: each segment is run twice, once with the switch (target
-    optimizer from the translated state) and once **without** (the source
-    optimizer simply continuing), and the reward is the *similarity* of the two,
-    `−|Δ best| / gap` (0 = the switched trajectory matches no-switch exactly).
-  - `absolute` — log-scaled best-so-far improvement over the segment.
-  - `relative` — log-scaled improvement over the hand-off available without a
-    network: the computed warm start into CMA-ES (see below), the lossy default
-    for other targets. Because each direction's reward is measured against *that
-    direction's* own baseline, the two hand-off directions are comparable, so this mode also logs
-    a per-direction mean reward (`reward/PSO->CMAES`, `reward/CMAES->PSO`).
+- **Reward** (`--reward-mode`): every mode is `score(translated run) −
+  score(baseline run)`. Each run's segment is scored by **AOCC** (area over the
+  convergence curve, relative to the gap to the BBOB optimum at the switch), or
+  by the log-scaled best-so-far improvement with `--endpoint-reward`. Modes
+  differ only in the baseline:
+  - `noswitch` **(default)** — the source optimizer simply continuing. Signed:
+    positive when switching (with the translated state) beats staying,
+    negative when it does worse.
+  - `absolute` — no baseline (0): the translated run's own score.
+  - `relative` — the hand-off available without a network: the computed warm
+    start into CMA-ES (see above), the lossy default for other targets.
+  - `coldtarget` — the target optimizer run cold for the whole budget.
 
-  `noswitch` and `relative` run an extra counterfactual optimizer per step
-  (~2× cost).
+  A comma-separated list sums several modes (`mixed` = `noswitch,relative`).
+  Each non-`absolute` mode runs one extra counterfactual optimizer per step
+  (~2× cost each). Except for a pure `absolute` reward, a per-direction mean
+  reward is logged (`reward/PSO->CMAES`, `reward/CMAES->PSO`).
 - **Action**: the decoded target fields, with the covariance emitted in factor
   space → stays PSD. PPO puts a Gaussian over these coordinates; TD3 acts
   deterministically and adds exploration noise (see below).
 - **Critic**: its own encoder (decoupled from the actor). It additionally
-  consumes a side-input of the 2 progress scalars (running-normalized). This
+  consumes a side-input of the 2 progress scalars (running-normalized), widened
+  by `--scale-feature` / `--use-ela` (PPO only). This
   feeds **only the critic** (the actor/translator stays a function of the
   optimizer state alone, so the evaluator (`uv run eval`) is unaffected).
 - **Normalization** (on by default): rewards are scaled by the running std of the
@@ -139,9 +143,11 @@ a value-function spike can't swamp the policy gradient. Exploration is a learned
 Gaussian whose log-std is **per action segment per target algorithm** (e.g.
 CMA-ES's mean shift, its covariance factor, and PSO's per-particle
 velocities each get their own std) — a single global scalar can't express the
-different natural scales of those fields. The log-std sits in its own optimizer
-param group at `lr × --std-lr-mult`, since one scalar needs a far larger step
-than the rest of the network to track its optimum. Saves
+different natural scales of those fields — plus a bounded per-dimension residual
+read from the encoder, so exploration adapts to the population. The base
+log-stds sit in their own optimizer param group at `lr × --std-lr-mult`, since
+these few scalars need a far larger step than the rest of the network to track
+their optimum. Saves
 `models/PSO_CMAES_ppo.pt`.
 
 **TD3** (`algorithm_translation/rl/td3/`, off-policy): a deterministic actor (the translator's
@@ -197,7 +203,7 @@ Success = translated ≥ lossy on average.
 
 ```
 algorithm_translation/
-├── optimizers/      # vendored SubOptimizer base + PSO family + CMA-ES
+├── optimizers/      # vendored SubOptimizer base + PSO family, CMA-ES, MadDE, BOBYQA
 ├── suite/           # IOH/BBOB problem loader + train/test splits
 ├── state/           # StateSpec schema + native<->canonical conversion, batching
 ├── models/          # norm, set-equivariant layers, encoder, heads, translator
@@ -206,7 +212,8 @@ algorithm_translation/
 │   ├── ppo/         #   PPO: config / rollout / update / loop
 │   └── td3/         #   TD3: config / networks / buffer / rollout / update / loop
 └── cli/             # console-script entry points + shared CLI/env plumbing
-    ├── common.py    #   shared RL CLI args + env/logger construction
+    ├── common.py    #   shared RL CLI args, env/logger construction, autosave
+    ├── scenario.py  #   lopo/loio train/test split flags + checkpoint split
     ├── train_ppo.py #   `uv run train`        <ALG_A> <ALG_B>
     ├── train_td3.py #   `uv run train-td3`    <ALG_A> <ALG_B>
     ├── evaluate.py  #   `uv run eval`         translated vs lossy vs cold hand-off
