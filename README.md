@@ -1,4 +1,4 @@
-# Continuous Algorithm Translation
+# Algorithm Translation
 
 Studying whether a neural network can **translate the internal state of one
 metaheuristic into another** — turning a PSO swarm (positions + **velocities** +

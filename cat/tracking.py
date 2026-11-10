@@ -24,7 +24,7 @@ try:  # loading .env is best-effort; absence of python-dotenv must not break run
 except Exception:  # pragma: no cover
     pass
 
-DEFAULT_PROJECT = "continuous-algorithm-translation"
+DEFAULT_PROJECT = "algorithm-translation"
 
 
 class WandbLogger:

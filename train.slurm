@@ -35,7 +35,7 @@ export MKL_NUM_THREADS=1
 # Compute nodes usually have no internet: either provide a key and let it sync,
 # or run offline and `wandb sync` the run dir from a login node afterwards.
 export WANDB_API_KEY=<ADD>             # or: export WANDB_MODE=offline  (then drop this line)
-export WANDB_PROJECT=continuous-algorithm-translation
+export WANDB_PROJECT=algorithm-translation
 export WANDB_ENTITY=<ADD>                    # or: unset WANDB_ENTITY
 
 # --- train -------------------------------------------------------------- #
