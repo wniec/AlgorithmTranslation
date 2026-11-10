@@ -20,7 +20,7 @@ state splits into:
 - **specific** fields — the algorithm's own machinery, which a bidirectional
   translator learns to map between algorithms.
 
-Three optimizers are implemented (`cat/optimizers/`): **PSO** (per-particle
+Three optimizers are implemented (`algorithm_translation/optimizers/`): **PSO** (per-particle
 velocities + personal bests), **CMA-ES** (mean + covariance + step-size +
 evolution paths), and **MadDE** (Biswas et al., CEC 2021 — a self-adaptive DE
 whose translated field is its **external archive**, a variable-size *point-set*).
@@ -30,7 +30,7 @@ seeded from the carried population. Any pair can be translated
 (`PSO`/`CMAES`/`MADDE`).
 
 CMA-ES's search distribution is **computed** rather than decoded from scratch
-(`cat/models/prior.py`): the mean is CMA-ES's own weighted recombination of the
+(`algorithm_translation/models/prior.py`): the mean is CMA-ES's own weighted recombination of the
 source's best points (a swarm's personal bests, otherwise its population), and
 the covariance has the form of its rank-μ update, blended 10% with its isotropic
 part. Its decoder head only predicts a residual around that — a mean shift, a
@@ -76,7 +76,7 @@ We want the translated state to make the target optimizer *optimize well*, which
 is non-differentiable. The RL trainers optimize that true objective directly over
 a Gymnasium environment, with the set-equivariant translator network as the
 policy. Two interchangeable trainers are provided; they share their environment,
-CLI, and W&B/checkpoint plumbing (`cat/cli/common.py`) and differ only in the
+CLI, and W&B/checkpoint plumbing (`algorithm_translation/cli/common.py`) and differ only in the
 learning algorithm. Each is a console script (see `[project.scripts]`), run with
 `uv run`:
 
@@ -92,7 +92,7 @@ uv run train-td3 PSO CMAES -d 2 3 5 --n-individuals 12 \
 
 Shared across both trainers:
 
-- **Environment** (`cat/rl/env.py`, a `gymnasium.Env`): one episode is a BBOB run
+- **Environment** (`algorithm_translation/rl/env.py`, a `gymnasium.Env`): one episode is a BBOB run
   with a single hand-off at a log-sampled switch point (the target then runs to
   the end of the budget; `--fixed-order` makes every switch `algo_a → algo_b`,
   otherwise the direction is random per episode); the observation is the source optimizer's
@@ -133,7 +133,7 @@ Shared across both trainers:
   and the structured covariance action; minibatches are grouped by
   `(target_algo, D, N)` so every batch is shape-homogeneous.
 
-**PPO** (`cat/rl/ppo/`, on-policy): clipped-surrogate + GAE over a
+**PPO** (`algorithm_translation/rl/ppo/`, on-policy): clipped-surrogate + GAE over a
 sliding-window rollout buffer, with PPO value-clipping and a Huber value loss so
 a value-function spike can't swamp the policy gradient. Exploration is a learned
 Gaussian whose log-std is **per action segment per target algorithm** (e.g.
@@ -144,7 +144,7 @@ param group at `lr × --std-lr-mult`, since one scalar needs a far larger step
 than the rest of the network to track its optimum. Saves
 `models/PSO_CMAES_ppo.pt`.
 
-**TD3** (`cat/rl/td3/`, off-policy): a deterministic actor (the translator's
+**TD3** (`algorithm_translation/rl/td3/`, off-policy): a deterministic actor (the translator's
 mean action, no learned std) with twin critics — `min(Q1, Q2)` targets, delayed
 & Polyak-averaged target networks, and target-policy smoothing — trained from a
 replay buffer. Exploration is fixed-scale Gaussian noise added to the action
@@ -196,7 +196,7 @@ Success = translated ≥ lossy on average.
 ## Layout
 
 ```
-cat/
+algorithm_translation/
 ├── optimizers/      # vendored SubOptimizer base + PSO family + CMA-ES
 ├── suite/           # IOH/BBOB problem loader + train/test splits
 ├── state/           # StateSpec schema + native<->canonical conversion, batching

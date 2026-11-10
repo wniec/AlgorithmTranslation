@@ -3,8 +3,8 @@ mirrors tests/test_rl_ppo.py so the two trainers are covered symmetrically."""
 
 import math
 
-from cat.rl.env import TranslationEnv
-from cat.rl.td3 import (
+from algorithm_translation.rl.env import TranslationEnv
+from algorithm_translation.rl.td3 import (
     ReplayBuffer,
     TD3Actor,
     TD3Config,
@@ -12,7 +12,7 @@ from cat.rl.td3 import (
     TwinQCritic,
     train_td3,
 )
-from cat.suite import IOHSuite, build_problem_ids
+from algorithm_translation.suite import IOHSuite, build_problem_ids
 
 
 def _envs():
@@ -145,7 +145,7 @@ def test_polyak_update_moves_target_toward_online():
     import torch
     from torch import nn
 
-    from cat.rl.td3 import _polyak_update
+    from algorithm_translation.rl.td3 import _polyak_update
 
     target = nn.Linear(3, 3, bias=False)
     online = nn.Linear(3, 3, bias=False)

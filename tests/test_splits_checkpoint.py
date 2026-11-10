@@ -7,8 +7,12 @@ import sys
 import pytest
 import torch
 
-from cat.cli.scenario import add_scenario_args, resolve_test_ids
-from cat.suite.bbob_splits import ALL_FUNCTIONS, EASY_TRAIN_FUNCTIONS, scenario_split
+from algorithm_translation.cli.scenario import add_scenario_args, resolve_test_ids
+from algorithm_translation.suite.bbob_splits import (
+    ALL_FUNCTIONS,
+    EASY_TRAIN_FUNCTIONS,
+    scenario_split,
+)
 
 
 def _parts(pid):
@@ -56,7 +60,7 @@ def test_eval_drops_training_problems():
 
 
 def test_ppo_autosaves_and_evaluates_heldout(tmp_path, monkeypatch):
-    from cat.cli import train_ppo
+    from algorithm_translation.cli import train_ppo
 
     out = tmp_path / "m.pt"
     argv = [

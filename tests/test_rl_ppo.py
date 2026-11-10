@@ -6,10 +6,10 @@ import math
 import numpy as np
 import pytest
 
-from cat.rl.env import TranslationEnv
-from cat.rl.policy import ActorCritic
-from cat.rl.ppo import PPOConfig, RolloutBuffer, Transition, train_ppo
-from cat.suite import IOHSuite, build_problem_ids
+from algorithm_translation.rl.env import TranslationEnv
+from algorithm_translation.rl.policy import ActorCritic
+from algorithm_translation.rl.ppo import PPOConfig, RolloutBuffer, Transition, train_ppo
+from algorithm_translation.suite import IOHSuite, build_problem_ids
 
 
 def _envs():

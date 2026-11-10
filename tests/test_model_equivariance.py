@@ -7,8 +7,8 @@
 
 import torch
 
-from cat.models import NormContext, TranslatorPair
-from cat.state.canonical import CanonicalState
+from algorithm_translation.models import NormContext, TranslatorPair
+from algorithm_translation.state.canonical import CanonicalState
 
 torch.manual_seed(0)
 

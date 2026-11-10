@@ -4,9 +4,9 @@ import numpy as np
 import pytest
 import torch
 
-from cat.state import from_canonical, get_spec, to_canonical
-from cat.state.canonical import resample_population
-from cat.state.schema import Struct
+from algorithm_translation.state import from_canonical, get_spec, to_canonical
+from algorithm_translation.state.canonical import resample_population
+from algorithm_translation.state.schema import Struct
 
 
 @pytest.mark.parametrize("algo", ["PSO", "CMAES"])

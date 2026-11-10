@@ -8,11 +8,11 @@ the neural translator maps its gradient/Hessian/radius both directions.
 import numpy as np
 import torch
 
-from cat.models import NormContext, TranslatorPair
-from cat.optimizers.portfolio import PORTFOLIO
-from cat.state import from_canonical, get_spec, to_canonical
-from cat.state.canonical import CanonicalState, warm_start_optimizer
-from cat.suite import IOHSuite
+from algorithm_translation.models import NormContext, TranslatorPair
+from algorithm_translation.optimizers.portfolio import PORTFOLIO
+from algorithm_translation.state import from_canonical, get_spec, to_canonical
+from algorithm_translation.state.canonical import CanonicalState, warm_start_optimizer
+from algorithm_translation.suite import IOHSuite
 
 
 def _cfg(problem_id="bbob_f001_i01_d05"):
@@ -108,7 +108,7 @@ def test_bobyqa_warmstart_uses_translated_model():
 
 
 def test_bobyqa_has_full_state():
-    from cat.state.canonical import has_full_state
+    from algorithm_translation.state.canonical import has_full_state
 
     _, opt = _make("bbob_f001_i01_d05", target_fe=800, n_individuals=12)
     opt.optimize()
@@ -181,7 +181,7 @@ def test_bobyqa_translates_both_directions():
 def test_bobyqa_specific_fields_survive_resample():
     """grad/hessian/radius are per-distribution, not per-individual, so resizing
     the interpolation set must leave them untouched (like CMA-ES's mean/cov)."""
-    from cat.state.canonical import resample_population
+    from algorithm_translation.state.canonical import resample_population
 
     _, opt = _make("bbob_f001_i01_d05", target_fe=800, n_individuals=12)
     opt.optimize()

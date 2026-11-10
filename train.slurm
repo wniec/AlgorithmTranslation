@@ -1,7 +1,7 @@
 #!/bin/bash
 # Train the PSO->CMAES state translator with PPO on an HPC GPU node.
 
-#SBATCH --job-name=cat-ppo-pso-cmaes
+#SBATCH --job-name=algotrans-ppo-pso-cmaes
 #SBATCH --partition=<ADD>              # queue/partition, e.g. plgrid-gpu-a100 / gpu
 #SBATCH --account=<ADD>                # grant / project account to charge
 #SBATCH --nodes=1

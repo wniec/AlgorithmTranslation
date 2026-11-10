@@ -18,10 +18,10 @@ dependencies = [
 ]
 
 [project.scripts]
-train = "cat.cli.train_ppo:main"
-train-td3 = "cat.cli.train_td3:main"
-eval = "cat.cli.evaluate:main"
-eval-switch = "cat.cli.evaluate_switcher:main"
+train = "algorithm_translation.cli.train_ppo:main"
+train-td3 = "algorithm_translation.cli.train_td3:main"
+eval = "algorithm_translation.cli.evaluate:main"
+eval-switch = "algorithm_translation.cli.evaluate_switcher:main"
 
 [tool.ruff]
 line-length = 100
@@ -39,18 +39,18 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-# Pin `cat` as first-party. Ruff's auto-detection classifies cat.* differently
+# Pin `algorithm_translation` as first-party. Ruff's auto-detection classifies algorithm_translation.* differently
 # depending on whether the project is installed in the env (editable locally vs
 # a fresh `uv sync` in CI), which made import sorting pass locally but fail in
 # CI. Declaring it explicitly makes the ordering deterministic everywhere.
-known-first-party = ["cat"]
+known-first-party = ["algorithm_translation"]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["cat"]
+packages = ["algorithm_translation"]
 
 [tool.pytest.ini_options]
 markers = [

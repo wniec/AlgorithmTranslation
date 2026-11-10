@@ -3,13 +3,13 @@
 import numpy as np
 import torch
 
-from cat.models.norm import _CLIP, NormContext
-from cat.rl.env import TranslationEnv
-from cat.rl.normalize import RunningMeanStd
-from cat.rl.policy import ActorCritic
-from cat.rl.ppo import PPOConfig, train_ppo
-from cat.state.canonical import CanonicalState
-from cat.suite import IOHSuite, build_problem_ids
+from algorithm_translation.models.norm import _CLIP, NormContext
+from algorithm_translation.rl.env import TranslationEnv
+from algorithm_translation.rl.normalize import RunningMeanStd
+from algorithm_translation.rl.policy import ActorCritic
+from algorithm_translation.rl.ppo import PPOConfig, train_ppo
+from algorithm_translation.state.canonical import CanonicalState
+from algorithm_translation.suite import IOHSuite, build_problem_ids
 
 
 def test_converged_population_keeps_critic_bounded():

@@ -6,19 +6,19 @@ import math
 import numpy as np
 import torch
 
-from cat.models.heads import StateDecoder
-from cat.models.norm import NormContext
-from cat.models.prior import PRIOR_BLEND, cmaes_specific, prior_distribution
-from cat.models.translator import TranslatorPair
-from cat.rl.env import TranslationEnv
-from cat.state.canonical import (
+from algorithm_translation.models.heads import StateDecoder
+from algorithm_translation.models.norm import NormContext
+from algorithm_translation.models.prior import PRIOR_BLEND, cmaes_specific, prior_distribution
+from algorithm_translation.models.translator import TranslatorPair
+from algorithm_translation.rl.env import TranslationEnv
+from algorithm_translation.state.canonical import (
     CanonicalState,
     collate,
     from_canonical,
     resample_population,
     to_canonical,
 )
-from cat.suite import IOHSuite, build_problem_ids
+from algorithm_translation.suite import IOHSuite, build_problem_ids
 
 
 def _swarm(B=2, N=20, D=5, seed=0, with_pbest_y=True):

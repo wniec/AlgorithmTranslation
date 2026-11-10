@@ -1,4 +1,4 @@
-"""Unit tests for the pure per-segment reward scoring in ``cat.rl.reward``.
+"""Unit tests for the pure per-segment reward scoring in ``algorithm_translation.rl.reward``.
 
 These exercise the AOCC / endpoint math directly (bounds, monotonicity, the
 floor clamp, the empty-history and no-optimum fallbacks) rather than through the
@@ -9,7 +9,7 @@ import math
 
 import numpy as np
 
-from cat.rl.reward import (
+from algorithm_translation.rl.reward import (
     _REWARD_EPS,
     _log_scale,
     aocc,

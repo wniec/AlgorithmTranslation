@@ -5,8 +5,8 @@ individual after every warm start."""
 
 import numpy as np
 
-from cat.optimizers.portfolio import PORTFOLIO
-from cat.suite import IOHSuite
+from algorithm_translation.optimizers.portfolio import PORTFOLIO
+from algorithm_translation.suite import IOHSuite
 
 
 def _cfg(problem_id="bbob_f001_i01_d05"):

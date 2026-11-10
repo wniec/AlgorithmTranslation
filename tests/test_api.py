@@ -1,7 +1,8 @@
 """Public-surface contract: the console-script entry points import and expose a
 callable ``main``, and the package ``__init__`` re-exports stay intact. These
 catch rename/move breakage (missing modules, dropped re-exports) cheaply — the
-class of failure the cat/cli + cat/rl package split could reintroduce.
+class of failure the algorithm_translation/cli + algorithm_translation/rl package
+split could reintroduce.
 """
 
 import importlib
@@ -9,16 +10,16 @@ import importlib
 
 def test_cli_modules_expose_main():
     for name in ("train_ppo", "train_td3", "evaluate", "evaluate_switcher"):
-        mod = importlib.import_module(f"cat.cli.{name}")
-        assert callable(mod.main), f"cat.cli.{name}.main missing/not callable"
+        mod = importlib.import_module(f"algorithm_translation.cli.{name}")
+        assert callable(mod.main), f"algorithm_translation.cli.{name}.main missing/not callable"
 
 
 def test_package_reexports_intact():
-    import cat.rl.env as env
-    import cat.rl.ppo as ppo
-    import cat.rl.reward as reward
-    import cat.rl.td3 as td3
-    import cat.state as state
+    import algorithm_translation.rl.env as env
+    import algorithm_translation.rl.ppo as ppo
+    import algorithm_translation.rl.reward as reward
+    import algorithm_translation.rl.td3 as td3
+    import algorithm_translation.state as state
 
     for n in (
         "PPOConfig",
@@ -32,7 +33,7 @@ def test_package_reexports_intact():
         "update",
         "explained_variance",
     ):
-        assert hasattr(ppo, n), f"cat.rl.ppo.{n} missing"
+        assert hasattr(ppo, n), f"algorithm_translation.rl.ppo.{n} missing"
     for n in (
         "TD3Actor",
         "TD3Config",
@@ -44,7 +45,7 @@ def test_package_reexports_intact():
         "train_td3",
         "_polyak_update",
     ):
-        assert hasattr(td3, n), f"cat.rl.td3.{n} missing"
+        assert hasattr(td3, n), f"algorithm_translation.rl.td3.{n} missing"
     for n in (
         "TranslationEnv",
         "scaled_improvement",
@@ -52,9 +53,9 @@ def test_package_reexports_intact():
         "_log_scale",
         "_REWARD_EPS",
     ):
-        assert hasattr(env, n), f"cat.rl.env.{n} missing"
+        assert hasattr(env, n), f"algorithm_translation.rl.env.{n} missing"
     for n in ("aocc", "run_term", "scaled_improvement", "log_scaled_improvement"):
-        assert hasattr(reward, n), f"cat.rl.reward.{n} missing"
+        assert hasattr(reward, n), f"algorithm_translation.rl.reward.{n} missing"
     for n in (
         "CanonicalState",
         "augment_native",
@@ -64,4 +65,4 @@ def test_package_reexports_intact():
         "from_canonical",
         "warm_start_optimizer",
     ):
-        assert hasattr(state, n), f"cat.state.{n} missing"
+        assert hasattr(state, n), f"algorithm_translation.state.{n} missing"

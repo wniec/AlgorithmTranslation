@@ -8,9 +8,9 @@ adaptivity, and coordinate-permutation equivariance."""
 
 import torch
 
-from cat.models.norm import NormContext
-from cat.rl.policy import ActorCritic
-from cat.state.canonical import CanonicalState
+from algorithm_translation.models.norm import NormContext
+from algorithm_translation.rl.policy import ActorCritic
+from algorithm_translation.state.canonical import CanonicalState
 
 
 def _state(algo, B=1, N=8, D=4, seed=0):

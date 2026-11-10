@@ -5,8 +5,8 @@ the shared population) so no policy is needed."""
 import numpy as np
 import pytest
 
-from cat.rl.env import TranslationEnv, scaled_improvement
-from cat.suite import IOHSuite, build_problem_ids
+from algorithm_translation.rl.env import TranslationEnv, scaled_improvement
+from algorithm_translation.suite import IOHSuite, build_problem_ids
 
 
 def _env(seed=0):
@@ -223,7 +223,7 @@ def test_mixed_reward_is_noswitch_plus_relative():
 
 
 def test_log_scaled_reward_properties():
-    from cat.rl.env import _log_scale, log_scaled_improvement
+    from algorithm_translation.rl.env import _log_scale, log_scaled_improvement
 
     # no improvement -> 0; improvement -> positive and monotonic in improvement.
     assert log_scaled_improvement(5.0, 5.0, 4.0) == 0.0
@@ -234,7 +234,7 @@ def test_log_scaled_reward_properties():
     # full-range improvement saturates at log(1 + 1/eps).
     import math
 
-    from cat.rl.env import _REWARD_EPS
+    from algorithm_translation.rl.env import _REWARD_EPS
 
     assert math.isclose(_log_scale(1.0), math.log(1 + 1 / _REWARD_EPS), rel_tol=1e-6)
 
@@ -285,7 +285,7 @@ def test_episode_runs_with_independent_population_sizes():
     smaller-than-target carried population makes the target optimizer's own
     set_data/initialize discard it and cold-init instead — exactly the same
     degenerate-source case the real PPO rollout loop already guards against
-    with source_has_full_state() (see collect_rollout in cat/rl/ppo/rollout.py).
+    with source_has_full_state() (see collect_rollout in algorithm_translation/rl/ppo/rollout.py).
     Drive the env the same defensive way and confirm every completed step
     still yields a finite reward."""
     env = _env_independent_sizes(n_a=8, n_b=20)
@@ -305,7 +305,7 @@ def test_episode_runs_with_independent_population_sizes():
 def test_policy_action_native_matches_target_n():
     """A real translator's assembled warm-start must actually be resized to
     the target's own population size (not just the source's)."""
-    from cat.rl.policy import ActorCritic
+    from algorithm_translation.rl.policy import ActorCritic
 
     env = _env_independent_sizes(n_a=8, n_b=20)
     ac = ActorCritic("PSO", "CMAES", hidden=16, n_layers=1, resample_seed=0)
@@ -380,7 +380,7 @@ def _env_ela(seed=0, **kw):
 def test_ela_features_appended_to_context():
     """use_ela widens the critic context by ELA_DIM and populates those
     channels (nonzero) once the gathered sample is large enough."""
-    from cat.suite.ela import ELA_DIM
+    from algorithm_translation.suite.ela import ELA_DIM
 
     env = _env_ela()
     assert env.context_dim == 2 + ELA_DIM
@@ -398,7 +398,7 @@ def test_ela_features_appended_to_context():
 def test_ela_skipped_on_terminal_observation():
     """The terminal observation is never acted on, so its (expensive) ELA
     block is skipped (left zero) while progress channels stay valid."""
-    from cat.suite.ela import ELA_DIM
+    from algorithm_translation.suite.ela import ELA_DIM
 
     env = _env_ela()
     obs, _ = env.reset()
@@ -411,7 +411,7 @@ def test_ela_skipped_on_terminal_observation():
 
 def test_ela_combines_with_scale_feature():
     """scale_feature and use_ela stack: context = progress(2) + scale(1) + ELA."""
-    from cat.suite.ela import ELA_DIM
+    from algorithm_translation.suite.ela import ELA_DIM
 
     env = _env_ela(scale_feature=True)
     assert env.context_dim == 3 + ELA_DIM

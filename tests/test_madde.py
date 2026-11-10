@@ -3,12 +3,12 @@
 import numpy as np
 import torch
 
-from cat.models import NormContext, TranslatorPair
-from cat.optimizers.DE import ARATE
-from cat.optimizers.portfolio import PORTFOLIO
-from cat.state import from_canonical, get_spec, to_canonical
-from cat.state.canonical import warm_start_optimizer
-from cat.suite import IOHSuite
+from algorithm_translation.models import NormContext, TranslatorPair
+from algorithm_translation.optimizers.DE import ARATE
+from algorithm_translation.optimizers.portfolio import PORTFOLIO
+from algorithm_translation.state import from_canonical, get_spec, to_canonical
+from algorithm_translation.state.canonical import warm_start_optimizer
+from algorithm_translation.suite import IOHSuite
 
 
 def _cfg(problem_id="bbob_f001_i01_d05"):
@@ -151,7 +151,7 @@ def _rand_state(algo, B=2, N=10, D=4):
         }
     else:  # MADDE
         spec = {"archive": torch.randn(B, round(ARATE * N), D, generator=g)}
-    from cat.state.canonical import CanonicalState
+    from algorithm_translation.state.canonical import CanonicalState
 
     return CanonicalState(algo, pos, vals, bx, by, spec)
 

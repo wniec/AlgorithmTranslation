@@ -7,11 +7,11 @@ import math
 
 import torch
 
-from cat.cli.evaluate import evaluate_problem, translate_single
-from cat.rl.policy import ActorCritic
-from cat.state.canonical import to_canonical
-from cat.suite import IOHSuite, build_problem_ids
-from cat.train_loop import load_translator, translator_meta
+from algorithm_translation.cli.evaluate import evaluate_problem, translate_single
+from algorithm_translation.rl.policy import ActorCritic
+from algorithm_translation.state.canonical import to_canonical
+from algorithm_translation.suite import IOHSuite, build_problem_ids
+from algorithm_translation.train_loop import load_translator, translator_meta
 
 
 def _pair():

@@ -3,7 +3,7 @@ positions, valid spacing."""
 
 import numpy as np
 
-from cat.optimizers.base import sample_switch_points
+from algorithm_translation.optimizers.base import sample_switch_points
 
 
 def test_count_monotonic_and_finishes_on_budget():

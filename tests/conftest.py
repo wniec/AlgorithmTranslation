@@ -4,8 +4,8 @@ and return its augmented native warm-start dict."""
 import numpy as np
 import pytest
 
-from cat.optimizers.portfolio import PORTFOLIO
-from cat.suite import IOHSuite
+from algorithm_translation.optimizers.portfolio import PORTFOLIO
+from algorithm_translation.suite import IOHSuite
 
 
 def run_one(algo: str, problem_id: str = "bbob_f001_i01_d05", target_fe: int = 400):
