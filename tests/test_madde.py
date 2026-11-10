@@ -6,7 +6,7 @@ import torch
 from cat.models import NormContext, TranslatorPair
 from cat.optimizers.DE import ARATE
 from cat.optimizers.portfolio import PORTFOLIO
-from cat.state import from_canonical, to_canonical
+from cat.state import from_canonical, get_spec, to_canonical
 from cat.state.canonical import warm_start_optimizer
 from cat.suite import IOHSuite
 
@@ -168,7 +168,7 @@ def test_translate_to_madde_produces_archive():
 
 
 def test_madde_archive_decode_is_deterministic():
-    """Same state -> same archive (deterministic seeding) so cycle drift is stable."""
+    """Same state -> same archive (deterministic seeding)."""
     pair = TranslatorPair("PSO", "MADDE").eval()
     s = _rand_state("PSO", N=8, D=3)
     ctx = NormContext.from_shared(s.positions, s.values)
@@ -178,15 +178,13 @@ def test_madde_archive_decode_is_deterministic():
     assert torch.equal(a, b)
 
 
-def test_madde_cycle_runs_both_directions():
-    from cat.losses import field_distance
-
+def test_madde_translates_both_directions():
     for a, b in (("PSO", "MADDE"), ("MADDE", "CMAES")):
         pair = TranslatorPair(a, b).eval()
         s = _rand_state(a)
         ctx = NormContext.from_shared(s.positions, s.values)
         with torch.no_grad():
-            _, back = pair.cycle(s, ctx)
-            drift = float(field_distance(back, s, ctx))
-        assert np.isfinite(drift)
-        assert sorted(back.specific) == sorted(s.specific)
+            out = pair.translate(s, b, ctx)
+        assert out.algo == b
+        assert sorted(out.specific) == sorted(f.name for f in get_spec(b).specific)
+        assert all(torch.isfinite(v).all() for v in out.specific.values())

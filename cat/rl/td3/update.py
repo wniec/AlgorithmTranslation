@@ -54,7 +54,7 @@ def update(
         groups[_group_key(tr)].append(i)
     group_keys = list(groups.keys())
 
-    metrics = {"critic_loss": 0.0, "q_value": 0.0, "actor_loss": 0.0, "cycle": 0.0}
+    metrics = {"critic_loss": 0.0, "q_value": 0.0, "actor_loss": 0.0}
     n_steps = 0
     actor_updates = 0
     for _ in range(cfg.gradient_steps):
@@ -127,10 +127,6 @@ def update(
             act_state_new = _action_state(actor, target_algo, a_new, batch, ctx)
             q1_new = critic.q1(source_algo, target_algo, batch, act_state_new, ctx, contexts)
             actor_loss = -q1_new.mean()
-            if cfg.lambda_cycle != 0.0:
-                cycle = actor.cycle_drift(batch, ctx, cycle_mode=cfg.cycle_mode)
-                actor_loss = actor_loss + cfg.lambda_cycle * cycle
-                metrics["cycle"] += float(cycle.detach())
 
             actor_opt.zero_grad()
             actor_loss.backward()
@@ -149,6 +145,5 @@ def update(
         "critic_loss": metrics["critic_loss"] / n_steps,
         "q_value": metrics["q_value"] / n_steps,
         "actor_loss": metrics["actor_loss"] / actor_updates,
-        "cycle": metrics["cycle"] / actor_updates,
     }
     return out, grad_step

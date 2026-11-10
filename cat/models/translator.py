@@ -4,10 +4,6 @@ Holds an encoder and a decoder head per algorithm. Translating A->B means
 ``Encoder_A`` then ``Head_B``; the produced B-state *reuses A's shared
 population* (positions / values / best), since those are the fixed
 "circumstances" of the switch — only the algorithm-specific fields are decoded.
-
-This makes the round trip well-defined: ``translate(A->B)`` then
-``translate(B->A)`` returns an A-state on the same population, and the
-cycle-consistency loss compares only the algorithm-specific fields.
 """
 
 from __future__ import annotations
@@ -81,27 +77,3 @@ class TranslatorPair(nn.Module):
     def other(self, algo: str) -> str:
         return self.algo_b if algo == self.algo_a else self.algo_a
 
-    def cycle(self, state: CanonicalState, ctx: NormContext):
-        """A -> B -> A. Returns (mid_state_B, round_trip_state_A)."""
-        tgt = self.other(state.algo)
-        mid = self.translate(state, tgt, ctx)
-        back = self.translate(mid, state.algo, ctx)
-        return mid, back
-
-    def cycle_drift(
-        self, state: CanonicalState, ctx: NormContext, cycle_mode: str = "field"
-    ):
-        """Mean A->B->A drift for a batch (the cycle-consistency penalty), scored
-        either on decoded fields ("field", default) or re-encoded latents
-        ("latent") — see ``cat.losses`` for the rationale behind each. Shared by
-        both RL trainers (PPO's ``ActorCritic``, TD3's ``TD3Actor``), which each
-        wrap one ``TranslatorPair`` as their actor."""
-        from cat.losses import field_distance, latent_cycle_loss
-
-        _, back = self.cycle(state, ctx)
-        if cycle_mode == "field":
-            return field_distance(back, state, ctx)
-        elif cycle_mode == "latent":
-            return latent_cycle_loss(self, state, back, ctx)
-        else:
-            raise ValueError(f"unknown cycle_mode {cycle_mode!r}")

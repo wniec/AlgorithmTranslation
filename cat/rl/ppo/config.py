@@ -29,8 +29,6 @@ class PPOConfig:
     # to re-enable (e.g. 0.2 reproduces the old throttle; a larger value is a
     # looser, decoupled window).
     vf_clip: float | None = None
-    lambda_cycle: float = 0.05
-    cycle_mode: str = "field"  # "field" (decoded fields) or "latent" (re-encoded latents)
     lr: float = 3e-4
     # log_std is a single global scalar (see ActorCritic.log_std): at the shared
     # network lr it can only drift by ~lr per opt.step(), which is too slow to

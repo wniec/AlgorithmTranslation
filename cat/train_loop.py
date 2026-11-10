@@ -59,3 +59,10 @@ def load_translator(path: str, device="cpu") -> TranslatorPair:
     pair.to(device)
     pair.eval()
     return pair
+
+
+def load_checkpoint_split(path: str) -> dict | None:
+    """The train/test split a checkpoint was trained under (``None`` for
+    checkpoints saved before splits were recorded)."""
+    ckpt = torch.load(path, map_location="cpu", weights_only=False)
+    return ckpt.get("split")

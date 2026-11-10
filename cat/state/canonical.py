@@ -178,8 +178,7 @@ def to_canonical(algo: str, native: dict, device="cpu") -> CanonicalState:
 def _resize_point_set(points: Tensor, m_cap: int, positions: Tensor) -> Tensor:
     """Resize a point-set to exactly ``m_cap`` rows, deterministically: truncate
     if too many; if too few, cycle the existing points (or the population, when
-    the set is empty). Deterministic so the canonical state — and hence the
-    cycle-consistency loss — is well-defined."""
+    the set is empty). Deterministic so the canonical state is reproducible."""
     m = points.shape[0]
     if m == m_cap:
         return points

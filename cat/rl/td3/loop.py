@@ -17,11 +17,17 @@ from cat.rl.td3.update import update
 
 
 def train_td3(
-    actor: TD3Actor, critic: TwinQCritic, envs, cfg: TD3Config, log_fn=None
+    actor: TD3Actor,
+    critic: TwinQCritic,
+    envs,
+    cfg: TD3Config,
+    log_fn=None,
+    on_update=None,
 ) -> TD3Log:
     """Run TD3. ``log_fn(metrics)`` is called once per update (for W&B;
     optional). Mirrors ``cat.rl.ppo.train_ppo``'s outer loop/logging shape so
-    the two algorithms' runs are directly comparable."""
+    the two algorithms' runs are directly comparable. ``on_update(u, log)`` runs after
+    update ``u`` is applied and logged (checkpointing)."""
     actor.to(cfg.device)
     critic.to(cfg.device)
     target_actor = copy.deepcopy(actor).to(cfg.device)
@@ -77,4 +83,6 @@ def train_td3(
                 f"| critic {m['critic_loss']:.4f} | actor {m['actor_loss']:.4f} "
                 f"| q {m['q_value']:.4f}"
             )
+        if on_update is not None:
+            on_update(u, log)
     return log

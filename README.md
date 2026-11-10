@@ -39,15 +39,8 @@ covariance factor (`--cov-rank`), a step-size multiplier and a blend shift, i.e.
 
 A `TranslatorPair` holds an encoder + decoder head per algorithm. Translating
 `A -> B` reuses A's population and only decodes B's specific fields. It is trained
-with three objectives (`cat/losses.py`):
-
-1. **Cycle-consistency** — with the population fixed, `A -> B -> A` must perturb
-   A's own parameters as little as possible.
-2. **Reconstruction** — each algorithm's encoder/decoder is an autoencoder
-   identity (anchors the shared latent).
-3. **Utility proxy** — the translated state must be a good warm-start for the
-   target (CMA-ES: elites likely under the decoded distribution; PSO: velocities
-   point down-hill), so the cycle can't be solved by a useless near-identity map.
+with reinforcement learning (PPO or TD3, below) on the downstream optimization
+reward.
 
 The network is **set-equivariant**: permutation-invariant over particles
 (DeepSets pooling) and permutation-equivariant over coordinate axes (attention
@@ -136,8 +129,6 @@ Shared across both trainers:
   advantages stay at ~unit scale. The structured optimizer state is already
   per-sample normalized inside the network (`NormContext`). Disable with
   `--no-norm-reward` / `--no-norm-obs`. (Logged `return` is always the raw value.)
-- **Cycle-consistency** enters as a differentiable penalty (`--lambda-cycle`),
-  keeping the `A→B→A`-minimal condition in the objective.
 - **Grouping**: both loops are custom (no SB3) so they handle variable `D`/`N`
   and the structured covariance action; minibatches are grouped by
   `(target_algo, D, N)` so every batch is shape-homogeneous.
@@ -168,6 +159,23 @@ Saves `models/PSO_CMAES_td3.pt`.
 Either checkpoint is consumed directly by `uv run eval`
 (`--model models/PSO_CMAES_ppo.pt` or `..._td3.pt`).
 
+**Train/test scenario** (both trainers, `--scenario`): every run is either
+`lopo` (**leave-some-problems-out**, default: held-out BBOB *functions*, chosen
+by `--split easy|hard|random`) or `loio` (**leave-some-instances-out**: the same
+functions, `--functions` default all 24, trained on `--instances` and tested on
+held-out `--test-instances`). Envs only ever see the train problems; the split
+is stored in every checkpoint (`ckpt["split"]`), and `uv run eval` /
+`uv run eval-switch` default to that held-out set and always drop training
+problems.
+
+**Autosave + evaluation**: every `--save-every` updates (default 50; 0
+disables) the weights are saved to `<out>_upd00050.pt`, ... and that checkpoint
+is evaluated on up to `--eval-max-problems` held-out problems per direction
+(same episodes every time, fixed by `--eval-seed`). The scores are stored in the
+checkpoint (`ckpt["eval"]`) and, with `--wandb`, logged as `eval/*`
+(`log10_prec/{translated,lossy,cold}`, `win_rate/translated_vs_{lossy,cold}`,
+per direction and averaged under `eval/mean/*`).
+
 ## Evaluate (the headline metric)
 
 ```bash
@@ -183,8 +191,7 @@ the best objective reached by each:
 - **lossy** — carry only the shared population (current default);
 - **cold** — fresh target, ignores the source.
 
-Success = translated ≥ lossy on average. The mean cycle-consistency drift
-(`A -> B -> A`) is reported alongside.
+Success = translated ≥ lossy on average.
 
 ## Layout
 
@@ -194,7 +201,6 @@ cat/
 ├── suite/           # IOH/BBOB problem loader + train/test splits
 ├── state/           # StateSpec schema + native<->canonical conversion, batching
 ├── models/          # norm, set-equivariant layers, encoder, heads, translator
-├── losses.py        # cycle + reconstruction + utility-proxy terms
 ├── train_loop.py    # device resolution + checkpoint io
 ├── rl/              # RL core: env (gymnasium), reward, policy, normalize
 │   ├── ppo/         #   PPO: config / rollout / update / loop

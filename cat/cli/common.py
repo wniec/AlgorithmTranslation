@@ -7,11 +7,18 @@ algorithm hyperparameters differ (kept in each script)."""
 from __future__ import annotations
 
 import argparse
+import os
+import time
+from collections import defaultdict
 
+import torch
+from tqdm import tqdm
+
+from cat.cli.evaluate import evaluate_heldout
+from cat.cli.scenario import add_scenario_args, split_from_args
 from cat.optimizers.portfolio import PORTFOLIO
 from cat.rl.env import TranslationEnv
 from cat.suite import IOHSuite
-from cat.suite.bbob_splits import ALL_FUNCTIONS, EASY_TRAIN_FUNCTIONS, build_problem_ids
 from cat.tracking import WandbLogger
 
 
@@ -21,9 +28,7 @@ def add_algo_args(p: argparse.ArgumentParser) -> None:
 
 
 def add_env_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument("-d", "--dims", type=int, nargs="+", default=[2, 3, 5])
-    p.add_argument("--instances", type=int, nargs="+", default=[1, 2, 3])
-    p.add_argument("--split", choices=["easy", "all"], default="easy")
+    add_scenario_args(p)
     p.add_argument("--fe-multiplier", type=int, default=2000)
     p.add_argument(
         "--n-individuals",
@@ -125,12 +130,40 @@ def add_runtime_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--out", default=None)
 
 
-def build_envs(args) -> list[TranslationEnv]:
-    funcs = EASY_TRAIN_FUNCTIONS if args.split == "easy" else ALL_FUNCTIONS
+def add_checkpoint_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--save-every",
+        type=int,
+        default=50,
+        help="autosave the weights every N updates (epochs) and evaluate that "
+        "checkpoint on the held-out test split; 0 disables",
+    )
+    p.add_argument(
+        "--eval-max-problems",
+        type=int,
+        default=20,
+        help="held-out problems scored per direction at each autosave",
+    )
+    p.add_argument(
+        "--eval-seed",
+        type=int,
+        default=123,
+        help="fixes the held-out subset, switch points and optimizer seeds, so "
+        "every autosave is scored on the same episodes",
+    )
+
+
+def build_envs(args, train_ids: list[str]) -> list[TranslationEnv]:
+    """One env per dimension, each walking only the *training* problems."""
     suite = IOHSuite()
+    by_dim: dict[int, list[str]] = defaultdict(list)
+    for pid in train_ids:
+        by_dim[int(pid.rsplit("_d", 1)[1])].append(pid)
     envs = []
     for dim in args.dims:
-        ids = build_problem_ids(funcs, [dim], args.instances)
+        ids = by_dim[dim]
+        if not ids:
+            continue
         envs.append(
             TranslationEnv(
                 args.algo_a,
@@ -164,3 +197,73 @@ def build_logger(args, trainer: str) -> WandbLogger:
         config={**vars(args), "trainer": trainer},
         x_axis="update",
     )
+
+
+def build_split(args) -> tuple[list[str], list[str]]:
+    """Resolve the lopo/loio split and report it."""
+    train_ids, test_ids = split_from_args(args)
+    print(
+        f"scenario={args.scenario}"
+        + (f" ({args.split})" if args.scenario == "lopo" else "")
+        + f" | {len(train_ids)} train / {len(test_ids)} held-out problems"
+    )
+    return train_ids, test_ids
+
+
+class Checkpointer:
+    """Saves the weights every ``--save-every`` updates and evaluates that
+    checkpoint on the held-out split, logging ``eval/*`` metrics to W&B.
+
+    ``make_ckpt(train_log)`` returns the checkpoint dict to save (built by the
+    trainer; ``train_log`` carries the running normalizers); ``translator`` is
+    the live TranslatorPair being trained. Pass the instance as the training
+    loop's ``on_update`` hook.
+    """
+
+    def __init__(self, args, out: str, make_ckpt, translator, test_ids, logger):
+        self.args = args
+        self.every = args.save_every
+        self.stem, self.ext = os.path.splitext(out)
+        self.make_ckpt = make_ckpt
+        self.translator = translator
+        self.test_ids = test_ids
+        self.logger = logger
+        n_a = args.n_individuals_a if args.n_individuals_a is not None else args.n_individuals
+        n_b = args.n_individuals_b if args.n_individuals_b is not None else args.n_individuals
+        self._n = {args.algo_a: n_a, args.algo_b: n_b}
+        self.directions = [(args.algo_a, args.algo_b)]
+        if not args.fixed_order:  # training sees both directions -> score both
+            self.directions.append((args.algo_b, args.algo_a))
+
+    def __call__(self, u: int, train_log) -> None:
+        done = u + 1  # updates completed so far
+        if not self.every or done % self.every:
+            return
+        path = f"{self.stem}_upd{done:05d}{self.ext or '.pt'}"
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        ckpt = self.make_ckpt(train_log)
+        torch.save(ckpt, path)
+
+        t0 = time.time()
+        metrics, _ = evaluate_heldout(
+            self.translator,
+            self.test_ids,
+            self.directions,
+            fe_multiplier=self.args.fe_multiplier,
+            n_for=self._n.get,
+            seed=self.args.eval_seed,
+            max_problems=self.args.eval_max_problems,
+            suite=IOHSuite(),
+        )
+        metrics = {f"eval/{k}": v for k, v in metrics.items()}
+        # Store the scores alongside the weights they belong to.
+        ckpt["eval"] = {"update": done, **metrics}
+        torch.save(ckpt, path)
+
+        self.logger.log({**metrics, "eval/seconds": time.time() - t0}, step=u)
+        head = ", ".join(
+            f"{k.removeprefix('eval/')}={v:.3g}"
+            for k, v in metrics.items()
+            if "win_rate" in k or "log10_prec/translated" in k
+        )
+        tqdm.write(f"[checkpoint] update {done}: saved {path} | {head}")

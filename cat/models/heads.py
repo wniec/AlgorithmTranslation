@@ -202,8 +202,7 @@ class StateDecoder(nn.Module):
     @staticmethod
     def _seed_positions(positions: Tensor, m: int) -> Tensor:
         """Seed ``m`` point-set slots deterministically by cycling the population
-        (slot i <- population[i mod N]); keeps archive decode reproducible so the
-        cycle-consistency loss is well-defined."""
+        (slot i <- population[i mod N]); keeps archive decode reproducible."""
         n = positions.shape[1]
         idx = torch.arange(m, device=positions.device) % n
         return positions[:, idx, :]

@@ -1,6 +1,5 @@
 """The PPO update: clipped-surrogate policy loss + (optionally clipped) value
-loss + the differentiable cycle-consistency penalty, over shape-homogeneous
-minibatches grouped by ``(target_algo, D, N)``."""
+loss, over shape-homogeneous minibatches grouped by ``(target_algo, D, N)``."""
 
 from __future__ import annotations
 
@@ -95,7 +94,7 @@ def update(ac: ActorCritic, opt, transitions: list[Transition], cfg: PPOConfig) 
                     [transitions[i].ret for i in mb], dtype=torch.float32, device=device
                 )
 
-                logp, entropy, value, batch, ctx, std = ac.evaluate_actions(
+                logp, entropy, value, std = ac.evaluate_actions(
                     states, source_algo, target_algo, actions, contexts
                 )
                 with torch.no_grad():
@@ -124,19 +123,7 @@ def update(ac: ActorCritic, opt, transitions: list[Transition], cfg: PPOConfig) 
                 else:
                     value_loss = F.smooth_l1_loss(value, ret)
                 ent = entropy.mean()
-                # Skip the A->B->A round trip entirely when it wouldn't affect
-                # the loss anyway, rather than computing it just to multiply by 0.
-                if cfg.lambda_cycle == 0.0:
-                    cycle = value.new_zeros(())
-                else:
-                    cycle = ac.cycle_drift(batch, ctx, cycle_mode=cfg.cycle_mode)
-
-                loss = (
-                    policy_loss
-                    + cfg.vf_coef * value_loss
-                    - cfg.ent_coef * ent
-                    + cfg.lambda_cycle * cycle
-                )
+                loss = policy_loss + cfg.vf_coef * value_loss - cfg.ent_coef * ent
                 opt.zero_grad()
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(ac.parameters(), cfg.max_grad_norm)
@@ -144,7 +131,6 @@ def update(ac: ActorCritic, opt, transitions: list[Transition], cfg: PPOConfig) 
 
                 metrics["policy_loss"] += float(policy_loss.detach())
                 metrics["value_loss"] += float(value_loss.detach())
-                metrics["cycle"] += float(cycle.detach())
                 n_batches += 1
 
     n_batches = max(n_batches, 1)

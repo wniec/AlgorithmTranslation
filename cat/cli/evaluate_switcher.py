@@ -49,6 +49,7 @@ import argparse
 import numpy as np
 import torch
 
+from cat.cli.scenario import exclude_train_ids
 from cat.models.norm import NormContext
 from cat.optimizers.base import get_checkpoints, sample_switch_points
 from cat.optimizers.portfolio import PORTFOLIO
@@ -68,7 +69,7 @@ from cat.suite.bbob_splits import (
     INSTANCE_IDS,
     build_problem_ids,
 )
-from cat.train_loop import load_translator
+from cat.train_loop import load_checkpoint_split, load_translator
 
 # --------------------------------------------------------------------------- #
 # optimizer plumbing                                                          #
@@ -464,12 +465,16 @@ def parse_args():
     p.add_argument(
         "--model", default=None, help="translator checkpoint (default models/<A>_<B>.pt)"
     )
-    p.add_argument("-d", "--dims", type=int, nargs="+", default=[2, 3, 5],
-                   help=f"BBOB dimensions (available: {ALL_DIMS})")
+    p.add_argument("-d", "--dims", type=int, nargs="+", default=None,
+                   help=f"BBOB dimensions (available: {ALL_DIMS}; default: the "
+                        "checkpoint's, else 2 3 5)")
     p.add_argument("--instances", type=int, nargs="+", default=None,
                    help=f"BBOB instance ids (default: all {len(INSTANCE_IDS)} of them)")
     p.add_argument("--functions", type=int, nargs="+", default=None,
                    help="BBOB function ids 1-24 (default: the whole suite)")
+    # Problems the checkpoint was trained on (its stored lopo/loio split) are
+    # always excluded; with neither --functions nor --instances given, the
+    # checkpoint's held-out test set is used as-is.
     p.add_argument("--fe-multiplier", type=int, default=2000, help="FE budget = this * dim")
     p.add_argument("--n-switches", type=int, default=6, help="number of hand-offs per run")
     p.add_argument("--cdb", type=float, default=1.0,
@@ -500,9 +505,17 @@ def main():
     def n_for(algo):
         return n_a if algo == args.algo_a else n_b
 
-    funcs = set(args.functions) if args.functions else ALL_FUNCTIONS
-    instances = args.instances if args.instances else INSTANCE_IDS
-    ids = build_problem_ids(funcs, args.dims, instances)
+    ckpt_split = load_checkpoint_split(model)
+    if ckpt_split and not args.functions and not args.instances:
+        ids = list(ckpt_split["test_ids"])
+        if args.dims:
+            ids = [i for i in ids if int(i.rsplit("_d", 1)[1]) in set(args.dims)]
+        print(f"[split] using checkpoint's {ckpt_split['scenario']} test set")
+    else:
+        funcs = set(args.functions) if args.functions else ALL_FUNCTIONS
+        instances = args.instances if args.instances else INSTANCE_IDS
+        ids = build_problem_ids(funcs, args.dims or [2, 3, 5], instances)
+    ids = exclude_train_ids(ids, ckpt_split)
     rng = np.random.default_rng(args.seed)
     rng.shuffle(ids)
     if args.max_problems is not None:

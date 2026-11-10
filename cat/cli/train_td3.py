@@ -24,13 +24,17 @@ import numpy as np
 import torch
 
 from cat.cli.common import (
+    Checkpointer,
     add_algo_args,
+    add_checkpoint_args,
     add_env_args,
     add_logging_args,
     add_runtime_args,
     build_envs,
     build_logger,
+    build_split,
 )
+from cat.cli.scenario import split_record
 from cat.rl.td3 import TD3Actor, TD3Config, TwinQCritic, train_td3
 from cat.train_loop import resolve_device, translator_meta
 
@@ -106,13 +110,6 @@ def parse_args():
         default=0.005,
         help="Polyak averaging coefficient for the target actor/critic networks",
     )
-    p.add_argument("--lambda-cycle", type=float, default=0.0)
-    p.add_argument(
-        "--cycle-mode",
-        choices=["field", "latent"],
-        default="field",
-        help="score the A->B->A cycle penalty on decoded fields or re-encoded latents",
-    )
     p.add_argument(
         "--no-norm-reward",
         dest="norm_reward",
@@ -126,6 +123,7 @@ def parse_args():
         help="disable observation (context) normalization",
     )
     add_runtime_args(p)
+    add_checkpoint_args(p)
     add_logging_args(p)
     return p.parse_args()
 
@@ -136,7 +134,8 @@ def main():
     np.random.seed(args.seed)
     args.device = resolve_device(args.device)
 
-    envs = build_envs(args)
+    train_ids, test_ids = build_split(args)
+    envs = build_envs(args, train_ids)
     print(
         f"TD3 training {args.algo_a}<->{args.algo_b} | dims={args.dims} "
         f"| {len(envs)} env(s) | device={args.device}"
@@ -167,33 +166,40 @@ def main():
         noise_clip=args.noise_clip,
         policy_freq=args.policy_freq,
         tau=args.tau,
-        lambda_cycle=args.lambda_cycle,
-        cycle_mode=args.cycle_mode,
         norm_reward=args.norm_reward,
         norm_obs=args.norm_obs,
         device=args.device,
         seed=args.seed,
     )
-    logger = build_logger(args, "td3")
-    td3_log = train_td3(actor, critic, envs, cfg, log_fn=logger.log)
-    logger.finish()
-
     out = args.out or os.path.join("models", f"{args.algo_a}_{args.algo_b}_td3.pt")
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
-    # Save the actor's TranslatorPair under "state_dict" so evaluate.py /
-    # load_translator can consume it directly (same architecture PPO saves);
-    # keep the critic and running normalizer statistics too (for resuming).
-    ckpt = {
-        "state_dict": actor.translator.state_dict(),
-        "actor_state_dict": actor.state_dict(),
-        "critic_state_dict": critic.state_dict(),
-        **translator_meta(actor.translator),
-    }
-    if td3_log.ret_rms is not None:
-        ckpt["ret_rms"] = td3_log.ret_rms.state_dict()
-    if td3_log.obs_rms is not None:
-        ckpt["obs_rms"] = td3_log.obs_rms.state_dict()
-    torch.save(ckpt, out)
+    split = split_record(args, train_ids, test_ids)
+
+    def make_ckpt(td3_log) -> dict:
+        # Save the actor's TranslatorPair under "state_dict" so evaluate.py /
+        # load_translator can consume it directly (same architecture PPO saves);
+        # keep the critic, running normalizer statistics (for resuming) and the
+        # train/test split (so evaluators only score held-out problems).
+        ckpt = {
+            "state_dict": actor.translator.state_dict(),
+            "actor_state_dict": actor.state_dict(),
+            "critic_state_dict": critic.state_dict(),
+            **translator_meta(actor.translator),
+            "split": split,
+        }
+        if td3_log.ret_rms is not None:
+            ckpt["ret_rms"] = td3_log.ret_rms.state_dict()
+        if td3_log.obs_rms is not None:
+            ckpt["obs_rms"] = td3_log.obs_rms.state_dict()
+        return ckpt
+
+    logger = build_logger(args, "td3")
+    checkpointer = Checkpointer(args, out, make_ckpt, actor.translator, test_ids, logger)
+    td3_log = train_td3(
+        actor, critic, envs, cfg, log_fn=logger.log, on_update=checkpointer
+    )
+    logger.finish()
+    torch.save(make_ckpt(td3_log), out)
     print(f"saved TD3 translator to {out}")
 
 

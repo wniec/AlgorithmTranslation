@@ -7,12 +7,11 @@ scaled by a single robust scale; displacements (velocities, evolution paths)
 are scaled; the covariance scales by ``scale**2``.
 
 Crucially the normalization context is computed from the **shared** fields
-(``positions`` / ``values``), which are held fixed throughout a translation
-cycle. So the same context normalizes the A-state, the translated B-state, and
-the round-tripped A-state — a precondition for the cycle-consistency loss to be
-meaningful. The context is per-dim for the centre (permutes with coordinate
-axes) and a single scalar for the scale (permutation-invariant), which keeps the
-whole pipeline equivariant to coordinate permutations.
+(``positions`` / ``values``), which are held fixed through a translation, so
+the same context normalizes the A-state and the translated B-state. The
+context is per-dim for the centre (permutes with coordinate axes) and a single
+scalar for the scale (permutation-invariant), which keeps the whole pipeline
+equivariant to coordinate permutations.
 """
 
 from __future__ import annotations
@@ -28,7 +27,7 @@ _EPS = 1e-6
 # BBOB lives in [-5, 5]; floor the population scale well above zero so a
 # degenerate (collapsed-to-a-point) population can't make normalized quantities
 # explode. Clip normalized values to a sane band for the same reason — this
-# bounds the encoder inputs, the critic, and the cycle/recon losses without
+# bounds the encoder inputs and the critic without
 # touching the raw states fed to the optimizers (denormalize is left exact).
 _SCALE_FLOOR = 1e-2
 _CLIP = 50.0

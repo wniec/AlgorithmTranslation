@@ -145,18 +145,13 @@ class TD3Actor(nn.Module):
             tgt_state = resample_population(tgt_state, n_target, self._resample_rng)
         return from_canonical(tgt_state)
 
-    def cycle_drift(self, batch: CanonicalState, ctx, cycle_mode: str = "field"):
-        """Mean A->B->A drift for a batch; see ``TranslatorPair.cycle_drift``
-        (shared with PPO's ``ActorCritic``)."""
-        return self.translator.cycle_drift(batch, ctx, cycle_mode)
-
 
 class QCritic(nn.Module):
     """One of the two twins. Encodes the source state AND the proposed
     action-as-state (see module docstring), each with their own dedicated
     per-algorithm ``StateEncoder`` — kept separate from the actor's own
     encoder for the same reason PPO's critic does (cat/rl/policy.py): sharing
-    would make the critic chase a representation the actor/cycle losses
+    would make the critic chase a representation the actor loss
     constantly reshape."""
 
     def __init__(self, algo_a: str, algo_b: str, hidden: int = 64, n_layers: int = 2):

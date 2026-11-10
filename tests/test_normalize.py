@@ -99,7 +99,7 @@ def test_ppo_with_normalization():
     assert log.ret_rms is not None and log.obs_rms is not None
     assert log.ret_rms.count > 1e-4  # statistics actually accumulated
     for row in log.history:
-        for k in ("policy_loss", "value_loss", "cycle", "mean_return"):
+        for k in ("policy_loss", "value_loss", "mean_return"):
             assert np.isfinite(row[k])
 
 

@@ -18,8 +18,12 @@ from cat.rl.ppo.rollout import (
 from cat.rl.ppo.update import update
 
 
-def train_ppo(ac: ActorCritic, envs, cfg: PPOConfig, log_fn=None) -> PPOLog:
+def train_ppo(
+    ac: ActorCritic, envs, cfg: PPOConfig, log_fn=None, on_update=None
+) -> PPOLog:
     """Run PPO. ``log_fn(metrics)`` is called once per update (for W&B; optional).
+    ``on_update(u, log)`` runs after update ``u`` is applied and logged
+    (checkpointing).
 
     The reward/observation normalizers (running statistics) are attached to the
     returned log as ``log.ret_rms`` / ``log.obs_rms`` so they can be checkpointed.
@@ -51,7 +55,7 @@ def train_ppo(ac: ActorCritic, envs, cfg: PPOConfig, log_fn=None) -> PPOLog:
     executor = make_executor(ac, envs, cfg) if cfg.n_workers > 1 else None
     try:
         _train_loop(ac, envs, cfg, opt, ep_rng, ret_rms, obs_rms, buffer, log,
-                    log_fn, executor)
+                    log_fn, executor, on_update)
     finally:
         if executor is not None:
             executor.shutdown()
@@ -59,7 +63,7 @@ def train_ppo(ac: ActorCritic, envs, cfg: PPOConfig, log_fn=None) -> PPOLog:
 
 
 def _train_loop(ac, envs, cfg, opt, ep_rng, ret_rms, obs_rms, buffer, log,
-                log_fn, executor):
+                log_fn, executor, on_update=None):
     pbar = tqdm(range(cfg.updates), desc="training", unit="upd", dynamic_ncols=True)
     for u in pbar:
         if executor is not None:
@@ -97,7 +101,9 @@ def _train_loop(ac, envs, cfg, opt, ep_rng, ret_rms, obs_rms, buffer, log,
                 f"update {u:3d} | return {m['mean_return']:.4f} "
                 f"| pi {m['policy_loss']:.4f} | vf {m['value_loss']:.4f} "
                 f"| ev {m['explained_variance']:.3f} "
-                f"| std {m['policy_std']:.4f} | cycle {m['cycle']:.4f}"
+                f"| std {m['policy_std']:.4f}"
             )
+        if on_update is not None:
+            on_update(u, log)
     pbar.close()
     return log

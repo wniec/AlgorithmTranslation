@@ -5,10 +5,9 @@
 Each episode is a BBOB run that switches between the two named algorithms at
 log-uniformly sampled points; at every switch the policy (the set-equivariant
 translator) maps the source optimizer's internal state into the target's. The
-reward is the true downstream best-so-far improvement over the next segment, and
-the A->B->A cycle drift enters as a differentiable penalty — so the network
-learns hand-offs that are both *useful* and *reversible*, optimizing the real
-(non-differentiable) objective directly.
+reward is the true downstream best-so-far improvement over the next segment, so
+the network learns useful hand-offs by optimizing the real (non-differentiable)
+objective directly.
 
 PPO's action is a stochastic Gaussian over the translator's decoded fields,
 trained on-policy. See train_td3.py for an off-policy alternative that trains
@@ -27,13 +26,17 @@ import numpy as np
 import torch
 
 from cat.cli.common import (
+    Checkpointer,
     add_algo_args,
+    add_checkpoint_args,
     add_env_args,
     add_logging_args,
     add_runtime_args,
     build_envs,
     build_logger,
+    build_split,
 )
+from cat.cli.scenario import split_record
 from cat.rl.policy import ActorCritic
 from cat.rl.ppo import PPOConfig, train_ppo
 from cat.train_loop import resolve_device, translator_meta
@@ -116,13 +119,6 @@ def parse_args():
         "that caps explained variance. Critic-side only; adds a pflacco call "
         "(~0.4s) per acted step, so prefer running with --n-workers.",
     )
-    p.add_argument("--lambda-cycle", type=float, default=0.0)
-    p.add_argument(
-        "--cycle-mode",
-        choices=["field", "latent"],
-        default="field",
-        help="score the A->B->A cycle penalty on decoded fields or re-encoded latents",
-    )
     p.add_argument(
         "--no-norm-reward",
         dest="norm_reward",
@@ -137,6 +133,7 @@ def parse_args():
     )
     p.add_argument("--lr", type=float, default=1e-4)
     add_runtime_args(p)
+    add_checkpoint_args(p)
     add_logging_args(p)
     return p.parse_args()
 
@@ -147,7 +144,8 @@ def main():
     np.random.seed(args.seed)
     args.device = resolve_device(args.device)
 
-    envs = build_envs(args)
+    train_ids, test_ids = build_split(args)
+    envs = build_envs(args, train_ids)
     print(
         f"PPO training {args.algo_a}<->{args.algo_b} | dims={args.dims} "
         f"| {len(envs)} env(s) | device={args.device}"
@@ -175,8 +173,6 @@ def main():
         ent_coef=args.ent_coef,
         vf_coef=args.vf_coef,
         vf_clip=args.vf_clip,
-        lambda_cycle=args.lambda_cycle,
-        cycle_mode=args.cycle_mode,
         lr=args.lr,
         std_lr_mult=args.std_lr_mult,
         norm_reward=args.norm_reward,
@@ -185,25 +181,32 @@ def main():
         seed=args.seed,
         n_workers=args.n_workers,
     )
-    logger = build_logger(args, "ppo")
-    ppo_log = train_ppo(ac, envs, cfg, log_fn=logger.log)
-    logger.finish()
-
     out = args.out or os.path.join("models", f"{args.algo_a}_{args.algo_b}_ppo.pt")
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
-    # Save the actor's TranslatorPair under "state_dict" so evaluate.py /
-    # load_translator can consume it directly; keep the full actor-critic and the
-    # running normalizer statistics too (for resuming / reproducibility).
-    ckpt = {
-        "state_dict": ac.translator.state_dict(),
-        "actor_critic_state_dict": ac.state_dict(),
-        **translator_meta(ac.translator),
-    }
-    if ppo_log.ret_rms is not None:
-        ckpt["ret_rms"] = ppo_log.ret_rms.state_dict()
-    if ppo_log.obs_rms is not None:
-        ckpt["obs_rms"] = ppo_log.obs_rms.state_dict()
-    torch.save(ckpt, out)
+    split = split_record(args, train_ids, test_ids)
+
+    def make_ckpt(ppo_log) -> dict:
+        # Save the actor's TranslatorPair under "state_dict" so evaluate.py /
+        # load_translator can consume it directly; keep the full actor-critic,
+        # the running normalizer statistics (for resuming / reproducibility) and
+        # the train/test split (so evaluators only score held-out problems).
+        ckpt = {
+            "state_dict": ac.translator.state_dict(),
+            "actor_critic_state_dict": ac.state_dict(),
+            **translator_meta(ac.translator),
+            "split": split,
+        }
+        if ppo_log.ret_rms is not None:
+            ckpt["ret_rms"] = ppo_log.ret_rms.state_dict()
+        if ppo_log.obs_rms is not None:
+            ckpt["obs_rms"] = ppo_log.obs_rms.state_dict()
+        return ckpt
+
+    logger = build_logger(args, "ppo")
+    checkpointer = Checkpointer(args, out, make_ckpt, ac.translator, test_ids, logger)
+    ppo_log = train_ppo(ac, envs, cfg, log_fn=logger.log, on_update=checkpointer)
+    logger.finish()
+    torch.save(make_ckpt(ppo_log), out)
     print(f"saved PPO translator to {out}")
 
 

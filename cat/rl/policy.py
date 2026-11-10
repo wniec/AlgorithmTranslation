@@ -79,7 +79,7 @@ class ActorCritic(nn.Module):
         )
         # The critic has its OWN encoder per source algorithm. Sharing the
         # actor's encoder makes the critic chase a representation that the
-        # policy + cycle losses constantly reshape (a moving target) and lets a
+        # policy loss constantly reshapes (a moving target) and lets a
         # diverging value loss corrupt the actor; a separate encoder decouples
         # the two and keeps the value gradient off the actor.
         self.critic_encoders = nn.ModuleDict(
@@ -259,9 +259,8 @@ class ActorCritic(nn.Module):
     ):
         """Recompute log-prob / entropy / value for a homogeneous group.
 
-        Returns (log_prob, entropy, value, batch, ctx, std) — the batched state
-        and ctx are reused by the cycle-consistency auxiliary loss; ``std`` is
-        the effective (population-conditioned) per-coordinate std, for logging.
+        Returns (log_prob, entropy, value, std) — ``std`` is the effective
+        (population-conditioned) per-coordinate std, for logging.
         """
         batch = collate(states)
         ctx = _ctx(batch)
@@ -274,11 +273,4 @@ class ActorCritic(nn.Module):
         log_prob = dist.log_prob(actions).sum(-1)
         entropy = dist.entropy().sum(-1)
         value = self._value(source_algo, batch, ctx, contexts)
-        return log_prob, entropy, value, batch, ctx, std
-
-    def cycle_drift(
-        self, batch: CanonicalState, ctx: NormContext, cycle_mode: str = "field"
-    ) -> Tensor:
-        """Mean A->B->A drift for a batch (the cycle-consistency penalty); see
-        ``TranslatorPair.cycle_drift`` (shared with TD3's ``TD3Actor``)."""
-        return self.translator.cycle_drift(batch, ctx, cycle_mode)
+        return log_prob, entropy, value, std

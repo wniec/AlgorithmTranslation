@@ -48,7 +48,6 @@ class Field:
     struct: Struct
     native_key: str  # key in the optimizer's warm-start / attribute dict
     constraint: Constraint = Constraint.FREE
-    weight: float = 1.0  # relative weight in cycle / reconstruction loss
 
 
 @dataclass(frozen=True)
@@ -89,8 +88,8 @@ SHARED_FIELDS: tuple[Field, ...] = (
 PSO_SPEC = StateSpec(
     algo="PSO",
     specific=(
-        Field("velocity", Struct.PER_PARTICLE_PER_DIM, "v", weight=1.0),
-        Field("pbest_x", Struct.PER_PARTICLE_PER_DIM, "p_x", weight=1.0),
+        Field("velocity", Struct.PER_PARTICLE_PER_DIM, "v"),
+        Field("pbest_x", Struct.PER_PARTICLE_PER_DIM, "p_x"),
     ),
 )
 
@@ -103,10 +102,10 @@ PSO_SPEC = StateSpec(
 CMAES_SPEC = StateSpec(
     algo="CMAES",
     specific=(
-        Field("mean", Struct.PER_DIM, "mean", weight=1.0),
-        Field("sigma_cov", Struct.MATRIX, "cm", weight=1.0),
-        Field("p_c", Struct.PER_DIM, "p_c", weight=0.5),
-        Field("p_s", Struct.PER_DIM, "p_s", weight=0.5),
+        Field("mean", Struct.PER_DIM, "mean"),
+        Field("sigma_cov", Struct.MATRIX, "cm"),
+        Field("p_c", Struct.PER_DIM, "p_c"),
+        Field("p_s", Struct.PER_DIM, "p_s"),
     ),
 )
 
@@ -118,7 +117,7 @@ CMAES_SPEC = StateSpec(
 # are not translated; the population is the shared field.
 MADDE_SPEC = StateSpec(
     algo="MADDE",
-    specific=(Field("archive", Struct.POINT_SET, "archive", weight=1.0),),
+    specific=(Field("archive", Struct.POINT_SET, "archive"),),
 )
 
 
@@ -133,9 +132,9 @@ MADDE_SPEC = StateSpec(
 BOBYQA_SPEC = StateSpec(
     algo="BOBYQA",
     specific=(
-        Field("grad", Struct.PER_DIM, "grad", weight=0.5),
-        Field("hessian", Struct.MATRIX, "hessian", weight=1.0),
-        Field("radius", Struct.SCALAR, "radius", Constraint.POSITIVE, weight=1.0),
+        Field("grad", Struct.PER_DIM, "grad"),
+        Field("hessian", Struct.MATRIX, "hessian"),
+        Field("radius", Struct.SCALAR, "radius", Constraint.POSITIVE),
     ),
 )
 

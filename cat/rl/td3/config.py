@@ -26,8 +26,6 @@ class TD3Config:
     policy_freq: int = 2  # delayed actor/target update frequency, in gradient steps
     tau: float = 0.005  # Polyak averaging coefficient for target networks
     max_grad_norm: float = 1.0
-    lambda_cycle: float = 0.0  # optional cycle-consistency penalty on the actor loss
-    cycle_mode: str = "field"
     norm_reward: bool = True
     norm_obs: bool = True
     device: str = "cpu"

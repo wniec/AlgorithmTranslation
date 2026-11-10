@@ -63,7 +63,6 @@ def test_ppo_runs_and_metrics_finite():
             "policy_std_median",
             "policy_std_min",
             "policy_std_max",
-            "cycle",
             "mean_return",
         ):
             assert math.isfinite(row[k]), f"{k} not finite"
@@ -88,51 +87,9 @@ def test_ppo_policy_std_stats_are_consistent():
         assert row["policy_std_min"] <= row["policy_std"] <= row["policy_std_max"]
 
 
-def test_ppo_latent_cycle_mode_runs_and_metrics_finite():
-    ac = ActorCritic("PSO", "CMAES", hidden=32, n_layers=1)
-    cfg = PPOConfig(
-        updates=2,
-        rollout_steps=48,
-        ppo_epochs=2,
-        minibatch_size=16,
-        cycle_mode="latent",
-        seed=1,
-        log_every=0,
-    )
-    log = train_ppo(ac, _envs(), cfg)
-    for row in log.history:
-        for k in (
-            "policy_loss",
-            "value_loss",
-            "policy_std",
-            "policy_std_median",
-            "policy_std_min",
-            "policy_std_max",
-            "cycle",
-            "mean_return",
-        ):
-            assert math.isfinite(row[k]), f"{k} not finite"
-
-
-def test_ppo_lambda_cycle_zero_skips_cycle_computation():
-    ac = ActorCritic("PSO", "CMAES", hidden=32, n_layers=1)
-    cfg = PPOConfig(
-        updates=2,
-        rollout_steps=48,
-        ppo_epochs=2,
-        minibatch_size=16,
-        lambda_cycle=0.0,
-        seed=1,
-        log_every=0,
-    )
-    log = train_ppo(ac, _envs(), cfg)
-    for row in log.history:
-        assert row["cycle"] == 0.0
-
-
 def test_ppo_runs_with_independent_population_sizes():
     """Each algo running its own population size (PSO=8, CMAES=20) must not
-    disturb PPO training: the stochastic action/log-prob/value/cycle path
+    disturb PPO training: the stochastic action/log-prob/value path
     stays defined purely on the source's own N (see ActorCritic.act /
     _assemble_native) — only the assembled warm-start is resized. Metrics
     must stay finite end-to-end through rollout + update."""
@@ -154,7 +111,6 @@ def test_ppo_runs_with_independent_population_sizes():
             "policy_std_median",
             "policy_std_min",
             "policy_std_max",
-            "cycle",
             "mean_return",
         ):
             assert math.isfinite(row[k]), f"{k} not finite"

@@ -66,7 +66,7 @@ def test_td3_runs_and_metrics_finite():
     log = train_td3(actor, critic, _envs(), cfg)
     assert len(log.history) == 2
     for row in log.history:
-        for k in ("critic_loss", "q_value", "actor_loss", "cycle", "mean_return"):
+        for k in ("critic_loss", "q_value", "actor_loss", "mean_return"):
             assert math.isfinite(row[k]), f"{k} not finite"
         assert row["n_transitions"] >= 1
 
@@ -90,43 +90,6 @@ def test_td3_runs_with_independent_population_sizes():
     for row in log.history:
         for k in ("critic_loss", "q_value", "actor_loss", "mean_return"):
             assert math.isfinite(row[k]), f"{k} not finite"
-
-
-def test_td3_cycle_penalty_field_and_latent_modes_finite():
-    for mode in ("field", "latent"):
-        actor, critic = _actor_critic()
-        cfg = TD3Config(
-            updates=1,
-            rollout_steps=32,
-            gradient_steps=6,
-            minibatch_size=8,
-            policy_freq=2,
-            lambda_cycle=0.1,
-            cycle_mode=mode,
-            seed=1,
-            log_every=0,
-        )
-        log = train_td3(actor, critic, _envs(), cfg)
-        for row in log.history:
-            assert math.isfinite(row["cycle"]), mode
-            assert math.isfinite(row["actor_loss"]), mode
-
-
-def test_td3_lambda_cycle_zero_skips_cycle_computation():
-    actor, critic = _actor_critic()
-    cfg = TD3Config(
-        updates=1,
-        rollout_steps=32,
-        gradient_steps=6,
-        minibatch_size=8,
-        policy_freq=2,
-        lambda_cycle=0.0,
-        seed=1,
-        log_every=0,
-    )
-    log = train_td3(actor, critic, _envs(), cfg)
-    for row in log.history:
-        assert row["cycle"] == 0.0
 
 
 def test_replay_buffer_window_evicts_oldest():

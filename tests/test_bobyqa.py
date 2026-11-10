@@ -167,19 +167,15 @@ def test_translate_to_bobyqa_produces_psd_model():
     assert torch.isfinite(out.specific["hessian"]).all()
 
 
-def test_bobyqa_cycle_runs_both_directions():
-    from cat.losses import field_distance, utility_loss
-
+def test_bobyqa_translates_both_directions():
     for a, b in (("PSO", "BOBYQA"), ("BOBYQA", "PSO")):
         pair = TranslatorPair(a, b).eval()
         s = _rand_state(a)
         ctx = NormContext.from_shared(s.positions, s.values)
         with torch.no_grad():
-            mid, back = pair.cycle(s, ctx)
-            drift = float(field_distance(back, s, ctx))
-            util = float(utility_loss(mid, ctx))
-        assert np.isfinite(drift) and np.isfinite(util)
-        assert sorted(back.specific) == sorted(s.specific)
+            out = pair.translate(s, b, ctx)
+        assert sorted(out.specific) == sorted(f.name for f in get_spec(b).specific)
+        assert all(torch.isfinite(v).all() for v in out.specific.values())
 
 
 def test_bobyqa_specific_fields_survive_resample():
