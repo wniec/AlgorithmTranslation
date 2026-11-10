@@ -214,9 +214,6 @@ cat/
 tests/               # round-trip, equivariance/PSD, RL env + PPO + TD3
 ```
 
-Adding a new algorithm to the study: see
-`.claude/skills/add-translation-algorithm/SKILL.md`.
-
 ## Acknowledgements
 
 The optimizer implementations and the BBOB run/switch loop are adapted from the
