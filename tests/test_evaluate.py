@@ -56,5 +56,6 @@ def test_evaluate_problem_reports_three_handoffs():
         problem_idx=0,
     )
     assert row is not None  # PSO builds a full state over this budget
-    for k in ("best_translated", "best_lossy", "best_cold", "best_after_warmup"):
+    keys = ("best_translated", "best_lossy", "best_cold", "best_after_warmup")
+    for k in (*keys, "reward_coldtarget"):
         assert k in row and math.isfinite(float(row[k])), k

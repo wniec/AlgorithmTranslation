@@ -95,4 +95,5 @@ def test_ppo_autosaves_and_evaluates_heldout(tmp_path, monkeypatch):
     assert ev["update"] == 2
     assert ev["eval/PSO_to_CMAES/n_problems"] == 1
     assert "eval/PSO_to_CMAES/win_rate/translated_vs_lossy" in ev
+    assert "eval/PSO_to_CMAES/reward/coldtarget" in ev
     assert "eval/CMAES_to_PSO/n_problems" not in ev  # --fixed-order: one direction

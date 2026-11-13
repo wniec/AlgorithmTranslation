@@ -29,6 +29,7 @@ from algorithm_translation.cli.scenario import add_scenario_args, resolve_test_i
 from algorithm_translation.models.norm import NormContext
 from algorithm_translation.optimizers.base import sample_switch_points
 from algorithm_translation.optimizers.portfolio import PORTFOLIO
+from algorithm_translation.rl.reward import run_term
 from algorithm_translation.state.canonical import (
     CanonicalState,
     augment_native,
@@ -72,15 +73,20 @@ def translate_single(pair, state: CanonicalState, target_algo: str) -> Canonical
     return out.index(0)
 
 
-def run_target(algo, cfg, max_fe, n_fe_start, n_individuals, seed, native=None):
-    """Run target optimizer for the remaining budget; return final best_y."""
+def _run_target_result(algo, cfg, max_fe, n_fe_start, n_individuals, seed, native=None):
+    """Run target optimizer from ``n_fe_start`` to ``max_fe``; return its result dict."""
     opt = _make(algo, cfg, max_fe, max_fe, float("inf"), n_individuals, seed)
     opt.n_function_evaluations = n_fe_start
     if native is None:
         opt.set_data()  # cold
     else:
         warm_start_optimizer(opt, native)
-    result = opt.optimize()
+    return opt.optimize()
+
+
+def run_target(algo, cfg, max_fe, n_fe_start, n_individuals, seed, native=None):
+    """Run target optimizer for the remaining budget; return final best_y."""
+    result = _run_target_result(algo, cfg, max_fe, n_fe_start, n_individuals, seed, native)
     return float(result.get("best_so_far_y", float("inf")))
 
 
@@ -96,9 +102,16 @@ def evaluate_problem(
     seed,
     problem_idx,
     n_individuals_target=None,
+    reward_measure="aocc",
+    aocc_decades=4.0,
 ):
     """``n_individuals`` sizes the source (and, unless ``n_individuals_target``
-    is given, the target) population."""
+    is given, the target) population.
+
+    Also reports ``reward_coldtarget``: the training env's 'coldtarget' reward
+    for this switch — score(translated run) - score(target run cold from FE 0
+    over the full budget), each scored by ``reward_measure`` from the incumbent
+    at the switch (see ``algorithm_translation.rl.reward.run_term``)."""
     prob = suite.get_problem(problem_id)
     dim = prob.dimension
     cfg = _problem_cfg(prob)
@@ -137,10 +150,11 @@ def evaluate_problem(
         "best_y": native_src["best_y"],
     }
 
+    translated_res = _run_target_result(
+        target, cfg, max_fe, n_fe, n_tgt, base_seed + 1, translated_native
+    )
     results = {
-        "translated": run_target(
-            target, cfg, max_fe, n_fe, n_tgt, base_seed + 1, translated_native
-        ),
+        "translated": float(translated_res.get("best_so_far_y", float("inf"))),
         "lossy": run_target(
             target, cfg, max_fe, n_fe, n_tgt, base_seed + 1, shared
         ),
@@ -148,12 +162,31 @@ def evaluate_problem(
             target, cfg, max_fe, n_fe, n_tgt, base_seed + 1, None
         ),
     }
+    # 'coldtarget' reference: the target run alone from scratch (FE 0) over
+    # the whole budget, same seed — as in TranslationEnv._coldtarget_term.
+    coldtarget_res = _run_target_result(
+        target, cfg, max_fe, 0, n_tgt, base_seed + 1, None
+    )
     optimum = getattr(prob, "optimum", None)
+    opt_val = float(optimum) if optimum is not None else None
+    rng_range = max(best_after_warmup - opt_val, 1e-12) if opt_val is not None else 1.0
+
+    def _score(res):
+        return run_term(
+            res,
+            best_after_warmup,
+            rng_range,
+            measure=reward_measure,
+            optimum=opt_val,
+            decades=aocc_decades,
+        )
+
     return {
         "problem_id": problem_id,
-        "optimum": float(optimum) if optimum is not None else float("nan"),
+        "optimum": opt_val if opt_val is not None else float("nan"),
         "best_after_warmup": best_after_warmup,
         **{f"best_{k}": v for k, v in results.items()},
+        "reward_coldtarget": _score(translated_res) - _score(coldtarget_res),
     }
 
 
@@ -198,6 +231,9 @@ def heldout_metrics(rows) -> dict:
             m[f"log10_prec/{k}"] = float(np.log10(prec).mean())
     for k in ("lossy", "cold"):
         m[f"win_rate/translated_vs_{k}"] = float((best["translated"] < best[k]).mean())
+    rc = [r["reward_coldtarget"] for r in rows if "reward_coldtarget" in r]
+    if rc:
+        m["reward/coldtarget"] = float(np.mean(rc))
     return m
 
 
@@ -212,6 +248,8 @@ def evaluate_heldout(
     max_problems=None,
     suite=None,
     progress=False,
+    reward_measure="aocc",
+    aocc_decades=4.0,
 ):
     """Evaluate ``pair`` on held-out ``test_ids`` for each (source, target) in
     ``directions``. ``n_for(algo)`` gives each algorithm's population size.
@@ -252,6 +290,8 @@ def evaluate_heldout(
                 n_individuals_target=n_for(target),
                 seed=seed,
                 problem_idx=idx,
+                reward_measure=reward_measure,
+                aocc_decades=aocc_decades,
             )
             if row is not None:
                 rows.append(row)

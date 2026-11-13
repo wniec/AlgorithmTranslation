@@ -256,6 +256,8 @@ class Checkpointer:
             seed=self.args.eval_seed,
             max_problems=self.args.eval_max_problems,
             suite=IOHSuite(),
+            reward_measure=getattr(self.args, "reward_measure", "aocc"),
+            aocc_decades=getattr(self.args, "aocc_decades", 4.0),
         )
         metrics = {f"eval/{k}": v for k, v in metrics.items()}
         # Store the scores alongside the weights they belong to.
@@ -266,6 +268,6 @@ class Checkpointer:
         head = ", ".join(
             f"{k.removeprefix('eval/')}={v:.3g}"
             for k, v in metrics.items()
-            if "win_rate" in k or "log10_prec/translated" in k
+            if "win_rate" in k or "log10_prec/translated" in k or "reward/" in k
         )
         tqdm.write(f"[checkpoint] update {done}: saved {path} | {head}")
