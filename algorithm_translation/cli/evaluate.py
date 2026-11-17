@@ -66,11 +66,32 @@ def _make(algo, cfg, max_fe, target_fe, best_y, n_individuals, seed):
 
 
 def translate_single(pair, state: CanonicalState, target_algo: str) -> CanonicalState:
+    return translate_with_action(pair, state, target_algo)[0]
+
+
+def translate_with_action(
+    pair, state: CanonicalState, target_algo: str
+) -> tuple[CanonicalState, np.ndarray]:
+    """Translate ``state`` and also return the deterministic action: the flat
+    normalized coordinates the decoder head emits (``action_mean``) before they
+    are rebuilt into the target's fields. For CMA-ES these are the residual
+    around the computed prior, so an all-zero action means "prior only"."""
     batch = collate([state])
     ctx = NormContext.from_shared(batch.positions, batch.values)
+    head = pair.decoders[target_algo]
     with torch.no_grad():
-        out = pair.translate(batch, target_algo, ctx)
-    return out.index(0)
+        z = pair.encode(batch, ctx)
+        coords = head.action_mean(z, batch.positions, ctx)
+        specific = head.build_state(coords, ctx, batch)
+    out = CanonicalState(
+        algo=target_algo,
+        positions=batch.positions,
+        values=batch.values,
+        best_x=batch.best_x,
+        best_y=batch.best_y,
+        specific=specific,
+    )
+    return out.index(0), coords[0].cpu().numpy()
 
 
 def _run_target_result(algo, cfg, max_fe, n_fe_start, n_individuals, seed, native=None):
@@ -141,7 +162,8 @@ def evaluate_problem(
     # --- three hand-offs over the remaining budget ----------------------- #
     # `translated_native` already bundles the shared population (from the source
     # state's positions) plus the decoded target-specific fields.
-    translated_native = from_canonical(translate_single(pair, state, target))
+    translated_state, action = translate_with_action(pair, state, target)
+    translated_native = from_canonical(translated_state)
     # The lossy hand-off carries only the shared population — the current default.
     shared = {
         "x": native_src["x"],
@@ -187,6 +209,10 @@ def evaluate_problem(
         "best_after_warmup": best_after_warmup,
         **{f"best_{k}": v for k, v in results.items()},
         "reward_coldtarget": _score(translated_res) - _score(coldtarget_res),
+        # Deterministic action magnitude: detects a policy that collapsed to
+        # (or never left) the all-zero action.
+        "action_rms": float(np.sqrt(np.mean(action**2))) if action.size else 0.0,
+        "action_max_abs": float(np.abs(action).max()) if action.size else 0.0,
     }
 
 
@@ -210,6 +236,8 @@ def summarize(rows, source, target):
 
 
 HANDOFFS = ("translated", "lossy", "cold")
+# An action counts as non-zero when any coordinate exceeds this in magnitude.
+ACTION_ZERO_TOL = 1e-6
 
 
 def heldout_metrics(rows) -> dict:
@@ -234,6 +262,12 @@ def heldout_metrics(rows) -> dict:
     rc = [r["reward_coldtarget"] for r in rows if "reward_coldtarget" in r]
     if rc:
         m["reward/coldtarget"] = float(np.mean(rc))
+    if all("action_rms" in r for r in rows):
+        rms = np.array([r["action_rms"] for r in rows])
+        mx = np.array([r["action_max_abs"] for r in rows])
+        m["action/rms"] = float(rms.mean())
+        m["action/max_abs"] = float(mx.max())
+        m["action/nonzero_frac"] = float((mx > ACTION_ZERO_TOL).mean())
     return m
 
 

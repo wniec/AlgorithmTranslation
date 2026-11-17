@@ -136,7 +136,7 @@ def add_checkpoint_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--save-every",
         type=int,
-        default=50,
+        default=5,
         help="autosave the weights every N updates (epochs) and evaluate that "
         "checkpoint on the held-out test split; 0 disables",
     )
@@ -269,5 +269,6 @@ class Checkpointer:
             f"{k.removeprefix('eval/')}={v:.3g}"
             for k, v in metrics.items()
             if "win_rate" in k or "log10_prec/translated" in k or "reward/" in k
+            or "action/nonzero_frac" in k
         )
         tqdm.write(f"[checkpoint] update {done}: saved {path} | {head}")

@@ -7,9 +7,15 @@ import math
 
 import torch
 
-from algorithm_translation.cli.evaluate import evaluate_problem, translate_single
+from algorithm_translation.cli.evaluate import (
+    evaluate_problem,
+    heldout_metrics,
+    translate_single,
+    translate_with_action,
+)
+from algorithm_translation.models.norm import NormContext
 from algorithm_translation.rl.policy import ActorCritic
-from algorithm_translation.state.canonical import to_canonical
+from algorithm_translation.state.canonical import collate, to_canonical
 from algorithm_translation.suite import IOHSuite, build_problem_ids
 from algorithm_translation.train_loop import load_translator, translator_meta
 
@@ -57,5 +63,31 @@ def test_evaluate_problem_reports_three_handoffs():
     )
     assert row is not None  # PSO builds a full state over this budget
     keys = ("best_translated", "best_lossy", "best_cold", "best_after_warmup")
-    for k in (*keys, "reward_coldtarget"):
+    for k in (*keys, "reward_coldtarget", "action_rms", "action_max_abs"):
         assert k in row and math.isfinite(float(row[k])), k
+
+
+def test_translate_with_action_matches_translate(pso_native):
+    pair = _pair()
+    state = to_canonical("PSO", pso_native)
+    out, action = translate_with_action(pair, state, "CMAES")
+    batch = collate([state])
+    ctx = NormContext.from_shared(batch.positions, batch.values)
+    with torch.no_grad():
+        ref = pair.translate(batch, "CMAES", ctx).index(0)
+    assert out.specific.keys() == ref.specific.keys()
+    for k in ref.specific:
+        assert torch.allclose(out.specific[k], ref.specific[k]), k
+    D = state.positions.shape[-1]
+    assert action.shape == (pair.decoders["CMAES"].action_dim(D, state.n),)
+
+
+def test_heldout_metrics_flags_zero_action():
+    row = {"best_translated": 1.0, "best_lossy": 2.0, "best_cold": 3.0, "optimum": 0.0}
+    zero = [{**row, "action_rms": 0.0, "action_max_abs": 0.0}] * 2
+    m = heldout_metrics(zero)
+    assert m["action/nonzero_frac"] == 0.0 and m["action/rms"] == 0.0
+    mixed = [zero[0], {**row, "action_rms": 0.3, "action_max_abs": 0.9}]
+    m = heldout_metrics(mixed)
+    assert m["action/nonzero_frac"] == 0.5
+    assert math.isclose(m["action/rms"], 0.15) and m["action/max_abs"] == 0.9
