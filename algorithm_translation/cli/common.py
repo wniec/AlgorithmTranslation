@@ -93,7 +93,8 @@ def add_env_args(p: argparse.ArgumentParser) -> None:
         "denoising both the critic target and the policy gradient — at ~Kx the "
         "counterfactual optimizer cost (offset by --n-workers). Seed 0 is the "
         "run that advances the episode. Checkpoint evals on the held-out split "
-        "are likewise repeated over K optimizer seeds and averaged.",
+        "are likewise repeated over K optimizer seeds and averaged, unless "
+        "--eval-reps overrides it.",
     )
     p.add_argument(
         "--reward-mode",
@@ -153,6 +154,14 @@ def add_checkpoint_args(p: argparse.ArgumentParser) -> None:
         default=123,
         help="fixes the held-out subset, switch points and optimizer seeds, so "
         "every autosave is scored on the same episodes",
+    )
+    p.add_argument(
+        "--eval-reps",
+        type=int,
+        default=None,
+        help="optimizer seeds each held-out episode is re-run with at every "
+        "autosave (same problem and switch point; results averaged). "
+        "Default: follow --reward-seeds",
     )
 
 
@@ -230,6 +239,14 @@ class Checkpointer:
         self.make_ckpt = make_ckpt
         self.translator = translator
         self.test_ids = test_ids
+        # Held-out eval repeats: --eval-reps if given, else as many optimizer
+        # seeds as the training reward averages over (--reward-seeds).
+        eval_reps = getattr(args, "eval_reps", None)
+        if eval_reps is None:
+            eval_reps = getattr(args, "reward_seeds", 1)
+        if eval_reps < 1:
+            raise SystemExit("--eval-reps must be >= 1")
+        self.eval_reps = int(eval_reps)
         self.logger = logger
         n_a = args.n_individuals_a if args.n_individuals_a is not None else args.n_individuals
         n_b = args.n_individuals_b if args.n_individuals_b is not None else args.n_individuals
@@ -259,9 +276,7 @@ class Checkpointer:
             suite=IOHSuite(),
             reward_measure=getattr(self.args, "reward_measure", "aocc"),
             aocc_decades=getattr(self.args, "aocc_decades", 4.0),
-            # Average the held-out eval over as many optimizer seeds as the
-            # training reward uses, with seeds shifted per repeat likewise.
-            seed_reps=getattr(self.args, "reward_seeds", 1),
+            seed_reps=self.eval_reps,
         )
         metrics = {f"eval/{k}": v for k, v in metrics.items()}
         # Store the scores alongside the weights they belong to.

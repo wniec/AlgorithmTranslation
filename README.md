@@ -177,7 +177,8 @@ problems.
 **Autosave + evaluation**: every `--save-every` updates (default 1; 0
 disables) the weights are saved to `<out>_upd00001.pt`, `<out>_upd00002.pt`, ... and that checkpoint
 is evaluated on up to `--eval-max-problems` held-out problems per direction
-(same episodes every time, fixed by `--eval-seed`). The scores are stored in the
+(same episodes every time, fixed by `--eval-seed`), each re-run under
+`--eval-reps` optimizer seeds (default: `--reward-seeds`) and averaged. The scores are stored in the
 checkpoint (`ckpt["eval"]`) and, with `--wandb`, logged as `eval/*`
 (`log10_prec/{translated,lossy,cold}`, `win_rate/translated_vs_{lossy,cold}`,
 per direction and averaged under `eval/mean/*`).
