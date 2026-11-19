@@ -92,7 +92,8 @@ def add_env_args(p: argparse.ArgumentParser) -> None:
         "difference of stochastic runs, so K>1 cuts reward noise ~1/K — "
         "denoising both the critic target and the policy gradient — at ~Kx the "
         "counterfactual optimizer cost (offset by --n-workers). Seed 0 is the "
-        "run that advances the episode.",
+        "run that advances the episode. Checkpoint evals on the held-out split "
+        "are likewise repeated over K optimizer seeds and averaged.",
     )
     p.add_argument(
         "--reward-mode",
@@ -136,7 +137,7 @@ def add_checkpoint_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--save-every",
         type=int,
-        default=5,
+        default=1,
         help="autosave the weights every N updates (epochs) and evaluate that "
         "checkpoint on the held-out test split; 0 disables",
     )
@@ -258,6 +259,9 @@ class Checkpointer:
             suite=IOHSuite(),
             reward_measure=getattr(self.args, "reward_measure", "aocc"),
             aocc_decades=getattr(self.args, "aocc_decades", 4.0),
+            # Average the held-out eval over as many optimizer seeds as the
+            # training reward uses, with seeds shifted per repeat likewise.
+            seed_reps=getattr(self.args, "reward_seeds", 1),
         )
         metrics = {f"eval/{k}": v for k, v in metrics.items()}
         # Store the scores alongside the weights they belong to.

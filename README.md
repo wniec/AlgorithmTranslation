@@ -174,8 +174,8 @@ is stored in every checkpoint (`ckpt["split"]`), and `uv run eval` /
 `uv run eval-switch` default to that held-out set and always drop training
 problems.
 
-**Autosave + evaluation**: every `--save-every` updates (default 5; 0
-disables) the weights are saved to `<out>_upd00005.pt`, ... and that checkpoint
+**Autosave + evaluation**: every `--save-every` updates (default 1; 0
+disables) the weights are saved to `<out>_upd00001.pt`, `<out>_upd00002.pt`, ... and that checkpoint
 is evaluated on up to `--eval-max-problems` held-out problems per direction
 (same episodes every time, fixed by `--eval-seed`). The scores are stored in the
 checkpoint (`ckpt["eval"]`) and, with `--wandb`, logged as `eval/*`

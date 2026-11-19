@@ -122,6 +122,7 @@ def evaluate_problem(
     n_individuals,
     seed,
     problem_idx,
+    seed_rep=0,
     n_individuals_target=None,
     reward_measure="aocc",
     aocc_decades=4.0,
@@ -132,7 +133,13 @@ def evaluate_problem(
     Also reports ``reward_coldtarget``: the training env's 'coldtarget' reward
     for this switch — score(translated run) - score(target run cold from FE 0
     over the full budget), each scored by ``reward_measure`` from the incumbent
-    at the switch (see ``algorithm_translation.rl.reward.run_term``)."""
+    at the switch (see ``algorithm_translation.rl.reward.run_term``).
+
+    ``seed_rep`` re-runs the same episode (same problem, same switch point)
+    under different optimizer seeds — the analogue of the training env's
+    ``reward_seeds`` (base seed + j). Each repeat shifts the base seed by 2 so
+    its source (base) and target (base + 1) seeds never collide with another
+    repeat's."""
     prob = suite.get_problem(problem_id)
     dim = prob.dimension
     cfg = _problem_cfg(prob)
@@ -140,7 +147,7 @@ def evaluate_problem(
     pop = n_individuals if n_individuals is not None else 20
     n_tgt = n_individuals if n_individuals_target is None else n_individuals_target
 
-    base_seed = (seed * 1_000_000 + problem_idx * 1_000) % (2**31)
+    base_seed = (seed * 1_000_000 + problem_idx * 1_000 + 2 * seed_rep) % (2**31)
 
     # One switch per episode (source -> target), positioned log-uniformly over
     # the FE budget and sampled independently per problem — so the hand-off is
@@ -284,6 +291,7 @@ def evaluate_heldout(
     progress=False,
     reward_measure="aocc",
     aocc_decades=4.0,
+    seed_reps=1,
 ):
     """Evaluate ``pair`` on held-out ``test_ids`` for each (source, target) in
     ``directions``. ``n_for(algo)`` gives each algorithm's population size.
@@ -292,6 +300,12 @@ def evaluate_heldout(
     all switch points/optimizer seeds are a pure function of ``seed``, so
     repeated calls — e.g. at successive training checkpoints — score the same
     episodes and are directly comparable. Runs on a CPU copy of ``pair``.
+
+    ``seed_reps`` runs every episode that many times with different optimizer
+    seeds (same problem and switch point; see ``evaluate_problem``'s
+    ``seed_rep``) and pools all runs into the metrics, so each metric is
+    averaged over seeds as well as problems. ``n_problems`` still counts
+    distinct problems; ``n_runs`` counts problem x seed runs.
 
     Returns ``(metrics, rows_by_direction)`` where ``metrics`` is flat:
     ``{"<SRC>_to_<TGT>/<metric>": value, ...}`` plus direction-averaged
@@ -313,29 +327,34 @@ def evaluate_heldout(
             it = tqdm(ids, desc=f"{source}->{target}", unit="prob", leave=False)
         rows = []
         for idx, pid in enumerate(it):
-            row = evaluate_problem(
-                pair,
-                source,
-                target,
-                pid,
-                suite,
-                fe_multiplier=fe_multiplier,
-                n_individuals=n_for(source),
-                n_individuals_target=n_for(target),
-                seed=seed,
-                problem_idx=idx,
-                reward_measure=reward_measure,
-                aocc_decades=aocc_decades,
-            )
-            if row is not None:
-                rows.append(row)
+            for rep in range(seed_reps):
+                row = evaluate_problem(
+                    pair,
+                    source,
+                    target,
+                    pid,
+                    suite,
+                    fe_multiplier=fe_multiplier,
+                    n_individuals=n_for(source),
+                    n_individuals_target=n_for(target),
+                    seed=seed,
+                    problem_idx=idx,
+                    seed_rep=rep,
+                    reward_measure=reward_measure,
+                    aocc_decades=aocc_decades,
+                )
+                if row is not None:
+                    rows.append(row)
         all_rows[(source, target)] = rows
         dm = heldout_metrics(rows)
+        if rows:
+            dm["n_runs"] = len(rows)
+            dm["n_problems"] = len({r["problem_id"] for r in rows})
         per_dir.append(dm)
         metrics.update({f"{source}_to_{target}/{k}": v for k, v in dm.items()})
     if len(per_dir) > 1:
         keys = set.intersection(*(set(d) for d in per_dir))
-        for k in sorted(keys - {"n_problems"}):
+        for k in sorted(keys - {"n_problems", "n_runs"}):
             metrics[f"mean/{k}"] = float(np.mean([d[k] for d in per_dir]))
     return metrics, all_rows
 

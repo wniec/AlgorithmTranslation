@@ -54,7 +54,7 @@ def parse_args():
         help="seed for the population-resizing jitter (when n-individuals-a/b differ)",
     )
     # TD3
-    p.add_argument("--updates", type=int, default=500)
+    p.add_argument("--updates", type=int, default=100)
     p.add_argument(
         "--rollout-steps",
         type=int,
