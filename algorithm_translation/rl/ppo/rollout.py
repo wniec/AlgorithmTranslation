@@ -1,26 +1,19 @@
-"""Rollout collection for PPO: whole-episode gathering with GAE, plus the
-parallel worker pool that fans collection out over processes.
-
-Rollout collection is the wall-clock bottleneck (the counterfactual optimizer
-runs inside ``env.step`` dominate), so ``collect_rollout_parallel`` runs a
-persistent pool of worker processes, each owning its own envs and a frozen
-snapshot of the policy + normalizers, and the main process merges the results.
+"""Rollout collection for PPO: whole episodes with GAE, single-process or
+fanned out over the worker pool (``rl.workers``). In parallel mode every worker
+uses a frozen snapshot of the policy and normalizers, and the main process
+merges the results and the new normalizer statistics once per update.
 """
 
 from __future__ import annotations
 
-import contextlib
 import copy
 import math
-import multiprocessing as mp
-import os
 import pickle
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 import torch
-import torch.multiprocessing as torch_mp
 
 from algorithm_translation.rl.env import TranslationEnv
 from algorithm_translation.rl.normalize import (
@@ -31,6 +24,14 @@ from algorithm_translation.rl.normalize import (
 )
 from algorithm_translation.rl.policy import ActorCritic
 from algorithm_translation.rl.ppo.config import PPOConfig, Transition
+from algorithm_translation.rl.workers import (
+    WORKER,
+    load_worker_policy,
+    make_executor,
+    policy_weights,
+)
+
+__all__ = ["collect_rollout", "collect_rollout_parallel", "make_executor"]
 
 
 def _gae(rewards, values, gamma, lam):
@@ -63,8 +64,7 @@ def _collect_episodes(
     ``frozen`` selects how the normalizers are used:
 
     * ``False`` (single-process path) — ``obs_rms``/``ret_rms`` are the live
-      estimators and are updated inline as collection proceeds, exactly as the
-      original loop did.
+      estimators and are updated inline as collection proceeds.
     * ``True`` (parallel worker path) — they are read-only snapshots: the
       context is normalized and the rewards scaled against the frozen stats, and
       the raw contexts + discounted returns are accumulated and returned so the
@@ -114,6 +114,12 @@ def _collect_episodes(
             obs = next_obs
         if not ep:
             continue
+        # The PPO update recomputes advantages as r - V(s) (see
+        # update._refresh_targets), which is only exact for one-step episodes.
+        if len(ep) != 1:
+            raise RuntimeError(
+                f"PPO expects single-step episodes, got {len(ep)} steps"
+            )
         ep_returns.append(float(sum(rewards)))  # report the RAW return
         if ret_rms is None:
             train_rewards = rewards
@@ -168,63 +174,14 @@ def collect_rollout(
 # envs and a copy of the policy, collecting a share of the rollout per update.
 # --------------------------------------------------------------------------- #
 
-_WORKER: dict = {}
-
-
-def _use_file_system_sharing() -> None:
-    """Have torch share tensors between processes via a shm *file* (mmap'd, with
-    the FD closed right after mapping) instead of the default 'file_descriptor'
-    strategy, which passes one open FD per storage over the pool socket.
-
-    The parallel rollout returns transitions holding tensors, and the
-    sliding-window ``RolloutBuffer`` retains them across updates. Under
-    'file_descriptor' those FDs accumulate past the process's open-file limit,
-    so the worker socket eventually delivers none of them -- the
-    ``received 0 items of ancdata`` -> ``BrokenProcessPool`` failure. Under
-    'file_system' a retained tensor costs shm pages, not a permanent FD.
-    """
-    # Suppress: strategy unavailable on this platform -> keep torch's default.
-    with contextlib.suppress(RuntimeError, ValueError):
-        torch_mp.set_sharing_strategy("file_system")
-
-
-def _worker_init(ac: ActorCritic, specs, base_seed: int, cfg: PPOConfig, counter):
-    """Runs once per worker process. Builds this worker's envs (with a distinct
-    seed offset so workers don't duplicate each other's episode stream) and
-    stores the policy + a persistent env-selection RNG in module globals."""
-    with counter.get_lock():
-        wid = counter.value
-        counter.value += 1
-    # One optimizer run per worker at a time: let each worker use a single
-    # thread so N worker processes don't oversubscribe the cores with N * (BLAS
-    # threads) — that makes more workers slower, not faster.
-    torch.set_num_threads(1)
-    _use_file_system_sharing()  # the worker is the sender of the buffered tensors
-    ac.to("cpu")
-    envs = [TranslationEnv(**spec) for spec in _seeded_specs(specs, wid)]
-    _WORKER["ac"] = ac
-    _WORKER["cfg"] = cfg
-    _WORKER["envs"] = envs
-    _WORKER["ep_rng"] = np.random.default_rng(base_seed + 10_000 * (wid + 1))
-
-
-def _seeded_specs(specs, wid: int):
-    """Offset each env spec's seed by the worker id so every worker walks a
-    different problem/instance/boundary stream."""
-    offset = 1_000_003 * (wid + 1)
-    return [{**s, "seed": int(s["seed"]) + offset} for s in specs]
-
-
 def _worker_collect(payload):
     """Collect ~``n_steps`` transitions with the given policy weights, using
     frozen normalizer snapshots. Runs in a worker process."""
     state_dict, obs_rms, ret_rms, n_steps = payload
-    ac: ActorCritic = _WORKER["ac"]
-    ac.load_state_dict(state_dict)
-    cfg: PPOConfig = _WORKER["cfg"]
+    ac = load_worker_policy(state_dict)
     with torch.no_grad():
         trs, ep_returns, switch_rewards, raw_ctxs, disc = _collect_episodes(
-            ac, _WORKER["envs"], cfg, _WORKER["ep_rng"], ret_rms, obs_rms,
+            ac, WORKER["envs"], WORKER["cfg"], WORKER["ep_rng"], ret_rms, obs_rms,
             n_steps, "cpu", frozen=True,
         )
     # Plain pickle copies tensor data inline. Returning the objects directly
@@ -250,7 +207,7 @@ def collect_rollout_parallel(
     and fold the new context/return statistics back into the live estimators."""
     n = cfg.n_workers
     per = math.ceil(cfg.rollout_steps / n)
-    state_dict = {k: v.detach().cpu() for k, v in ac.state_dict().items()}
+    state_dict = policy_weights(ac)
     obs_snap = copy.deepcopy(obs_rms)
     ret_snap = copy.deepcopy(ret_rms)
     payload = (state_dict, obs_snap, ret_snap, per)
@@ -274,26 +231,3 @@ def collect_rollout_parallel(
     if ret_rms is not None and all_disc:
         ret_rms.update(np.asarray(all_disc, dtype=np.float64)[:, None])
     return transitions, ep_returns, switch_rewards
-
-
-def make_executor(ac: ActorCritic, envs, cfg: PPOConfig) -> ProcessPoolExecutor:
-    """Build the persistent worker pool. ``spawn`` is used so workers start from
-    a clean interpreter (the live ioh problems in ``envs`` are not fork-safe to
-    reuse); each worker rebuilds its own envs from the picklable specs."""
-    # Children inherit these at spawn and import numpy fresh, so their BLAS
-    # (the CMA-ES eigendecomposition) stays single-threaded — see _worker_init.
-    # setdefault leaves any explicit user choice untouched; the already-imported
-    # parent BLAS is unaffected.
-    for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
-        os.environ.setdefault(var, "1")
-    _use_file_system_sharing()  # parent side: it also receives (and re-sends) tensors
-    mp_ctx = mp.get_context("spawn")
-    counter = mp_ctx.Value("i", 0)
-    specs = [e.spec() for e in envs]
-    template = copy.deepcopy(ac).cpu()  # pickled to each worker once, at startup
-    return ProcessPoolExecutor(
-        max_workers=cfg.n_workers,
-        mp_context=mp_ctx,
-        initializer=_worker_init,
-        initargs=(template, specs, cfg.seed, cfg, counter),
-    )

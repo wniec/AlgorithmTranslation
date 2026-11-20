@@ -41,7 +41,7 @@ covariance factor (`--cov-rank`), a step-size multiplier and a blend shift, i.e.
 
 A `TranslatorPair` holds an encoder + decoder head per algorithm. Translating
 `A -> B` reuses A's population and only decodes B's specific fields. It is trained
-with reinforcement learning (PPO or TD3, below) on the downstream optimization
+with reinforcement learning (PPO or GRPO, below) on the downstream optimization
 reward.
 
 The network is **set-equivariant**: permutation-invariant over particles
@@ -68,11 +68,11 @@ cp .env.example .env      # then edit WANDB_API_KEY / WANDB_PROJECT / WANDB_ENTI
 ```
 
 Then pass `--wandb` (optionally `--wandb-project` / `--wandb-run-name`) to
-`uv run train` or `uv run train-td3`. Per-update metrics are logged. Set
+`uv run train` or `uv run train-grpo`. Per-update metrics are logged. Set
 `WANDB_MODE=offline` to sync later, or `disabled` to turn it off. Without
 `--wandb` nothing W&B-related is touched.
 
-## Train with reinforcement learning (PPO or TD3)
+## Train with reinforcement learning (PPO or GRPO)
 
 We want the translated state to make the target optimizer *optimize well*, which
 is non-differentiable. The RL trainers optimize that true objective directly over
@@ -87,9 +87,9 @@ learning algorithm. Each is a console script (see `[project.scripts]`), run with
 uv run train PSO CMAES -d 2 3 5 --n-individuals 12 \
     --fe-multiplier 2000 --updates 100 --rollout-steps 1024
 
-# off-policy, deterministic-action TD3 (twin critics + replay buffer)
-uv run train-td3 PSO CMAES -d 2 3 5 --n-individuals 12 \
-    --fe-multiplier 2000 --updates 100 --rollout-steps 1024
+# critic-free GRPO: a group of sampled translations per switch state
+uv run train-grpo PSO CMAES -d 2 3 5 --n-individuals 12 \
+    --fe-multiplier 2000 --updates 100 --groups-per-update 128 --group-size 8
 ```
 
 Shared across both trainers:
@@ -120,8 +120,8 @@ Shared across both trainers:
   (~2× cost each). Except for a pure `absolute` reward, a per-direction mean
   reward is logged (`reward/PSO->CMAES`, `reward/CMAES->PSO`).
 - **Action**: the decoded target fields, with the covariance emitted in factor
-  space → stays PSD. PPO puts a Gaussian over these coordinates; TD3 acts
-  deterministically and adds exploration noise (see below).
+  space → stays PSD. Both trainers put a Gaussian over these coordinates (same
+  policy network, `ActorCritic`).
 - **Critic**: its own encoder (decoupled from the actor). It additionally
   consumes a side-input of the 2 progress scalars (running-normalized), widened
   by `--scale-feature` / `--use-ela` (PPO only). This
@@ -150,20 +150,26 @@ these few scalars need a far larger step than the rest of the network to track
 their optimum. Saves
 `models/PSO_CMAES_ppo.pt`.
 
-**TD3** (`algorithm_translation/rl/td3/`, off-policy): a deterministic actor (the translator's
-mean action, no learned std) with twin critics — `min(Q1, Q2)` targets, delayed
-& Polyak-averaged target networks, and target-policy smoothing — trained from a
-replay buffer. Exploration is fixed-scale Gaussian noise added to the action
-during rollout (`--expl-noise`); there is no decay schedule, so the
-exploration/exploitation balance is constant over training. Because the action
-dimension varies with `(algo, D, N)`, the critic can't concatenate a fixed-size
-`(state, action)`: instead the action is decoded back into a `CanonicalState`
-(parameter-free, so replayed off-policy actions reconstruct identically) and
-encoded with the target algo's own `StateEncoder` — an "action-as-state" critic.
-Saves `models/PSO_CMAES_td3.pt`.
+**GRPO** (`algorithm_translation/rl/grpo/`, critic-free): with a single switch
+per episode the task is a contextual bandit, so instead of a learned value
+baseline every switch state gets a group of `--group-size` sampled translations.
+Each is scored from that same state under the same post-switch seeds
+(`TranslationEnv.evaluate_action`, which does not advance the episode), and its
+advantage is its reward relative to the group: mean-centered and divided by the
+group std, or only mean-centered with `--no-adv-std-scale`. Between-problem and
+seed variance cancel inside a group. The action-independent reward baselines
+(`noswitch` / `relative` / `coldtarget`) cancel exactly, so `--reward-mode` only
+affects what is logged; each baseline is run once per group and cached. The
+update is PPO's clipped surrogate over these advantages (`--epochs`,
+`--minibatch-size`, `--clip`), on-policy, with no critic, value loss, GAE or
+reward/observation normalization. Logged extras: `group_reward_std` (how much
+the action matters within a state), `zero_adv_group_frac`, `approx_kl`,
+`clip_frac`. Cost per update: `--groups-per-update` warmups plus
+`groups × group-size × --reward-seeds` target runs plus one set of baselines per
+group. Saves `models/PSO_CMAES_grpo.pt`.
 
 Either checkpoint is consumed directly by `uv run eval`
-(`--model models/PSO_CMAES_ppo.pt` or `..._td3.pt`).
+(`--model models/PSO_CMAES_ppo.pt` or `..._grpo.pt`).
 
 **Train/test scenario** (both trainers, `--scenario`): every run is either
 `lopo` (**leave-some-problems-out**, default: held-out BBOB *functions*, chosen
@@ -208,18 +214,30 @@ algorithm_translation/
 ├── suite/           # IOH/BBOB problem loader + train/test splits
 ├── state/           # StateSpec schema + native<->canonical conversion, batching
 ├── models/          # norm, set-equivariant layers, encoder, heads, translator
+├── runs.py          # building / running an optimizer segment (shared everywhere)
+├── seeding.py       # derive_seed: every random stream from (seed, stream tag, ...)
 ├── train_loop.py    # device resolution + checkpoint io
-├── rl/              # RL core: env (gymnasium), reward, policy, normalize
+├── rl/              # RL core
+│   ├── env.py       #   TranslationEnv (gymnasium): one switch per episode
+│   ├── scoring.py   #   SwitchScorer: translated run(s) minus the reward baselines
+│   ├── reward.py    #   scoring one segment (AOCC / endpoint)
+│   ├── policy.py    #   ActorCritic (translator as actor + critic)
+│   ├── normalize.py #   running mean/std (PPO reward/obs normalization)
+│   ├── workers.py   #   process pool for parallel rollouts
 │   ├── ppo/         #   PPO: config / rollout / update / loop
-│   └── td3/         #   TD3: config / networks / buffer / rollout / update / loop
+│   └── grpo/        #   GRPO: config / rollout / update / loop
+├── evaluation/      # evaluating a trained translator (no CLI)
+│   ├── heldout.py   #   one switch per held-out problem (eval + checkpoint eval)
+│   ├── switcher.py  #   random multi-switch schedules (eval-switch)
+│   └── anytime.py   #   budget AOCC, ERT, ranks
 └── cli/             # console-script entry points + shared CLI/env plumbing
     ├── common.py    #   shared RL CLI args, env/logger construction, autosave
     ├── scenario.py  #   lopo/loio train/test split flags + checkpoint split
     ├── train_ppo.py #   `uv run train`        <ALG_A> <ALG_B>
-    ├── train_td3.py #   `uv run train-td3`    <ALG_A> <ALG_B>
+    ├── train_grpo.py #  `uv run train-grpo`   <ALG_A> <ALG_B>
     ├── evaluate.py  #   `uv run eval`         translated vs lossy vs cold hand-off
     └── evaluate_switcher.py  # `uv run eval-switch`  multi-switch evaluation
-tests/               # round-trip, equivariance/PSD, RL env + PPO + TD3
+tests/               # round-trip, equivariance/PSD, RL env + PPO + GRPO
 ```
 
 ## Acknowledgements

@@ -44,6 +44,8 @@ class CMAES(ES):
             * (self._mu_eff - 2.0 + 1.0 / self._mu_eff)
             / ((n + 2.0) ** 2 + self._mu_eff),
         )
+        # True when set_data supplied an evolution path p_s (see iterate's h_s).
+        self._p_s_warm = False
 
     def initialize(
         self,
@@ -106,14 +108,23 @@ class CMAES(ES):
         old_mean = mean.copy()
         mean = self._w @ x_best
 
+        # Conjugate evolution path: C^{-1/2} (m' - m) / sigma = B @ z_w (the
+        # sampled step is B D z, so the D factor must NOT appear here).
         p_s = (1.0 - self.c_s) * p_s + np.sqrt(
             self.c_s * (2.0 - self.c_s) * self._mu_eff
-        ) * (e_ve @ (d * (self._w @ z_best)))
-        h_s = (
-            np.linalg.norm(p_s)
-            / np.sqrt(1.0 - (1.0 - self.c_s) ** (2.0 * (self._n_generations + 1)))
-            < (1.4 + 2.0 / (n + 1.0)) * self._chi_n
-        )
+        ) * (e_ve @ (self._w @ z_best))
+        # The sqrt(1 - (1-c_s)^(2(g+1))) factor corrects ||p_s|| for a path that
+        # started at zero. A warm-started p_s did not, and _n_generations
+        # restarts at 0 after a hand-off, so the correction would inflate the
+        # normalized ||p_s||, force h_s = 0 and stall p_c for the first
+        # generations after the switch; skip it then.
+        if self._p_s_warm:
+            ps_corr = 1.0
+        else:
+            ps_corr = np.sqrt(
+                1.0 - (1.0 - self.c_s) ** (2.0 * (self._n_generations + 1))
+            )
+        h_s = np.linalg.norm(p_s) / ps_corr < (1.4 + 2.0 / (n + 1.0)) * self._chi_n
         p_c = (1.0 - self.c_c) * p_c + h_s * np.sqrt(
             self.c_c * (2.0 - self.c_c) * self._mu_eff
         ) * (mean - old_mean) / self.sigma
@@ -191,6 +202,7 @@ class CMAES(ES):
         self._warm_start = {
             k: kwargs.get(k) if _valid(k, kwargs.get(k)) else None for k in _shapes
         }
+        self._p_s_warm = self._warm_start["p_s"] is not None
         # Normalise x/y to exactly n_individuals rows so iterate() z-indexing is safe.
         # Too few points -> start fresh; too many -> keep best n_individuals.
         if x is not None and y is not None and len(x) >= self.n_individuals:

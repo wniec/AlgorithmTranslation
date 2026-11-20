@@ -22,12 +22,11 @@ class PPOConfig:
     clip: float = 0.2
     ent_coef: float = 0.0
     vf_coef: float = 0.25
-    # Value-function clip window, decoupled from the policy ratio `clip`. None
-    # (the default) disables value clipping — the standard choice, and it frees
-    # the critic to track returns that span many units (the old behavior reused
-    # `clip`=0.2, which throttled it, worst under --no-norm-reward). Set a float
-    # to re-enable (e.g. 0.2 reproduces the old throttle; a larger value is a
-    # looser, decoupled window).
+    # Value-function clip window, separate from the policy ratio `clip`. None
+    # (the default) disables value clipping, so the critic can track returns
+    # that span many units; a float bounds each value update to that window
+    # around the update-start prediction (a small window, e.g. 0.2, throttles
+    # the critic hard, worst under --no-norm-reward).
     vf_clip: float | None = None
     lr: float = 3e-4
     # log_std (see ActorCritic.log_std) is a handful of per-segment base

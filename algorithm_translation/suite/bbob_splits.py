@@ -13,6 +13,11 @@ INSTANCE_IDS = [1, 2, 3, 4, 5, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80]
 EASY_TRAIN_FUNCTIONS = {4, *range(6, 15), 18, 19, 20, 22, 23, 24}
 
 
+def problem_dim(problem_id: str) -> int:
+    """The dimension encoded in a problem id such as ``bbob_f001_i01_d05``."""
+    return int(problem_id.rsplit("_d", 1)[1])
+
+
 def build_problem_ids(
     functions: set[int],
     dims: list[int],

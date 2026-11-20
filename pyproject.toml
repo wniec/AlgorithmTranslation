@@ -19,7 +19,7 @@ dependencies = [
 
 [project.scripts]
 train = "algorithm_translation.cli.train_ppo:main"
-train-td3 = "algorithm_translation.cli.train_td3:main"
+train-grpo = "algorithm_translation.cli.train_grpo:main"
 eval = "algorithm_translation.cli.evaluate:main"
 eval-switch = "algorithm_translation.cli.evaluate_switcher:main"
 

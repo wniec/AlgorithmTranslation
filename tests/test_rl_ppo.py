@@ -120,7 +120,8 @@ def test_sampled_covariance_action_is_psd():
     ac = ActorCritic("PSO", "CMAES", hidden=32, n_layers=1)
     env = _envs()[0]
     obs, _ = env.reset()
-    assert obs["target_algo"] == "CMAES"
+    while obs["target_algo"] != "CMAES":  # the direction is random per episode
+        obs, _ = env.reset()
     step = ac.act(obs)  # stochastic sample
     cm = step.native["cm"]
     eig = np.linalg.eigvalsh(0.5 * (cm + cm.T))
