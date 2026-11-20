@@ -15,12 +15,12 @@ Saves a checkpoint compatible with `uv run eval` (`models/<A>_<B>_grpo.pt`).
 
 from __future__ import annotations
 
-import argparse
 import os
 
 import numpy as np
 import torch
 
+from algorithm_translation.cli import make_parser
 from algorithm_translation.cli.common import (
     Checkpointer,
     add_algo_args,
@@ -39,7 +39,7 @@ from algorithm_translation.train_loop import resolve_device, translator_meta
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description=__doc__)
+    p = make_parser(description=__doc__)
     add_algo_args(p)
     add_env_args(p)
     # network

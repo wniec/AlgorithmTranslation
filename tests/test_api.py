@@ -72,3 +72,15 @@ def test_package_reexports_intact():
         "warm_start_optimizer",
     ):
         assert hasattr(state, n), f"algorithm_translation.state.{n} missing"
+
+
+def test_cli_accepts_negative_scientific_values():
+    """argparse alone reads "-1e-3" as an option ("expected one argument")."""
+    from algorithm_translation.cli import make_parser
+
+    p = make_parser()
+    p.add_argument("-d", type=int)
+    p.add_argument("--ent-coef", type=float)
+    for raw, value in (("-1e-3", -1e-3), ("-2.5E+4", -2.5e4), ("-0.01", -0.01), ("-3", -3.0)):
+        assert p.parse_args(["--ent-coef", raw]).ent_coef == value
+    assert p.parse_args(["-d", "5"]).d == 5  # real options still parse

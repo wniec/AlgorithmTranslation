@@ -16,11 +16,9 @@ at least as good as lossy on average.
 
 from __future__ import annotations
 
-import argparse
-
 import numpy as np
 
-from algorithm_translation.cli import ALGO_CHOICES, population_sizes
+from algorithm_translation.cli import ALGO_CHOICES, make_parser, population_sizes
 from algorithm_translation.cli.scenario import add_scenario_args, resolve_test_ids
 from algorithm_translation.evaluation.heldout import HANDOFFS, evaluate_heldout
 from algorithm_translation.train_loop import (
@@ -45,7 +43,7 @@ def summarize(rows, source, target):
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description=__doc__)
+    p = make_parser(description=__doc__)
     p.add_argument("algo_a", choices=ALGO_CHOICES)
     p.add_argument("algo_b", choices=ALGO_CHOICES)
     p.add_argument(

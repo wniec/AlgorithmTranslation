@@ -49,7 +49,7 @@ import argparse
 import numpy as np
 from tqdm import tqdm
 
-from algorithm_translation.cli import ALGO_CHOICES, population_sizes
+from algorithm_translation.cli import ALGO_CHOICES, make_parser, population_sizes
 from algorithm_translation.cli.scenario import exclude_train_ids
 from algorithm_translation.evaluation.anytime import ERT_TARGETS, average_ranks, ert
 from algorithm_translation.evaluation.switcher import evaluate_problem
@@ -139,7 +139,7 @@ def summarize(rows, args):
 
 
 def parse_args():
-    p = argparse.ArgumentParser(
+    p = make_parser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     p.add_argument("algo_a", choices=ALGO_CHOICES)
