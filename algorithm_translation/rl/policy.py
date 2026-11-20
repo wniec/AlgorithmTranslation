@@ -47,7 +47,7 @@ CONTEXT_DIM = PROGRESS_DIM
 
 @dataclass
 class Step:
-    """Everything produced for one acted transition (used by the PPO buffer)."""
+    """Everything produced for one acted transition (PPO buffer / GRPO group)."""
 
     src_state: CanonicalState  # un-batched, on cpu
     target_algo: str
@@ -229,6 +229,77 @@ class ActorCritic(nn.Module):
             native=native,
         )
 
+    @torch.no_grad()
+    def act_group(self, obs: dict, k: int, device="cpu") -> list[Step]:
+        """Sample ``k`` candidate actions for the same state (for GRPO).
+
+        Encodes the state once and draws ``k`` i.i.d. Gaussian actions around
+        the shared mean. The critic is not evaluated (``Step.value`` is 0):
+        GRPO's baseline is the group itself."""
+        src = self.obs_to_state(obs, device)
+        target = obs["target_algo"]
+        batch = collate([src])
+        ctx = _ctx(batch)
+        z = self.translator.encode(batch, ctx)
+        mean = self.translator.decoders[target].action_mean(z, batch.positions, ctx)
+        std = self.action_std(target, z, batch.n)
+        dist = Normal(mean, std)
+        actions = dist.sample((k,))[:, 0]  # (k, A)
+        log_probs = dist.log_prob(actions[:, None]).sum(-1)[:, 0]  # (k,)
+        src_cpu = src.to("cpu")
+        steps = []
+        for i in range(k):
+            native = self._assemble_native(
+                actions[i : i + 1], target, batch, ctx, obs.get("target_n")
+            )
+            steps.append(
+                Step(
+                    src_state=src_cpu,
+                    target_algo=target,
+                    action=actions[i].cpu(),
+                    log_prob=float(log_probs[i]),
+                    value=0.0,
+                    native=native,
+                )
+            )
+        return steps
+
+    def log_prob_entropy(
+        self, states: list[CanonicalState], target_algo: str, actions: Tensor
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Actor-only counterpart of ``evaluate_actions`` for a homogeneous group:
+        ``(log_prob, entropy, std)`` without running the critic."""
+        batch = collate(states)
+        ctx = _ctx(batch)
+        z = self.translator.encode(batch, ctx)
+        mean = self.translator.decoders[target_algo].action_mean(
+            z, batch.positions, ctx
+        )
+        std = self.action_std(target_algo, z, batch.n)
+        dist = Normal(mean, std)
+        return dist.log_prob(actions).sum(-1), dist.entropy().sum(-1), std
+
+    @torch.no_grad()
+    def std_summary(self) -> dict[str, float]:
+        """The per-segment base exploration stds, for logging: one
+        ``policy_std/<algo>.<segment>`` entry each, plus their mean, median,
+        min and max (``policy_std``, ``policy_std_median``, ...)."""
+        out: dict[str, float] = {}
+        for algo, log_std in self.log_std.items():
+            names = self.translator.decoders[algo].segment_names()
+            for name, s in zip(names, log_std.exp().tolist(), strict=True):
+                out[f"policy_std/{algo}.{name}"] = s
+        stds = np.asarray(list(out.values()) or [0.0])
+        out["policy_std"] = float(stds.mean())
+        out["policy_std_median"] = float(np.median(stds))
+        out["policy_std_min"] = float(stds.min())
+        out["policy_std_max"] = float(stds.max())
+        return out
+
+    def actor_parameters(self) -> list[nn.Parameter]:
+        """Every parameter except the critic's (critic encoders + value head)."""
+        return [p for n, p in self.named_parameters() if not n.startswith("critic")]
+
     def _assemble_native(
         self, action: Tensor, target: str, batch, ctx, n_target: int | None = None
     ) -> dict:
@@ -252,6 +323,13 @@ class ActorCritic(nn.Module):
     # ------------------------------------------------------------------ #
     # PPO update                                                          #
     # ------------------------------------------------------------------ #
+
+    def values(
+        self, states: list[CanonicalState], source_algo: str, contexts: Tensor
+    ) -> Tensor:
+        """Critic values V(s) for a homogeneous group (same algo, D, N)."""
+        batch = collate(states)
+        return self._value(source_algo, batch, _ctx(batch), contexts)
 
     def evaluate_actions(
         self,

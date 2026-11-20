@@ -73,7 +73,7 @@ def test_std_matches_base_at_init():
 
 def test_std_becomes_per_dimension_after_head_learns():
     """Once the token head is non-trivial, a D-indexed segment's std varies
-    across dimensions (it is no longer one flat value per segment)."""
+    across dimensions (not one flat value per segment)."""
     ac = ActorCritic("PSO", "BOBYQA", hidden=32, n_layers=1).eval()
     with torch.no_grad():
         ac.std_token_head["BOBYQA"].weight.normal_(0, 0.5)

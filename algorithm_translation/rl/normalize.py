@@ -1,8 +1,9 @@
 """Running mean/std estimators for reward and observation normalization.
 
 ``RunningMeanStd`` uses Welford/parallel moments so statistics accumulate stably
-across the whole training run (not just one rollout). Two uses, shared by both
-the PPO (``algorithm_translation/rl/ppo/``) and TD3 (``algorithm_translation/rl/td3/``) trainers:
+across the whole training run (not just one rollout). Two uses, both in the
+PPO trainer (``algorithm_translation/rl/ppo/``; GRPO needs neither — its
+advantages are group-relative and it has no critic):
 
 * **reward normalization** — rewards are divided by the running std of the
   *discounted return* (the standard PPO/`VecNormalize` trick), which keeps the

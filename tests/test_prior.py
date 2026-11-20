@@ -106,7 +106,7 @@ def test_pbest_y_follows_every_state_operation():
     s = to_canonical("PSO", native)
     assert np.allclose(s.aux["pbest_y"].numpy(), native["p_y"])
     assert collate([s, s]).index(1).aux["pbest_y"].shape == (N,)
-    assert s.to("cpu").detach_clone().aux["pbest_y"].shape == (N,)
+    assert s.to("cpu").aux["pbest_y"].shape == (N,)
 
     small = resample_population(s, 3, rng)
     kept = torch.argsort(s.values)[:3]
@@ -200,9 +200,18 @@ def test_baseline_into_cmaes_is_computed_not_a_restart():
 
 
 def test_baseline_into_pso_stays_the_lossy_default():
-    env = _env(seed=3)
+    env = TranslationEnv(
+        "CMAES",
+        "PSO",
+        build_problem_ids({1, 8}, dims=[5], instances=[1]),
+        IOHSuite(),
+        fe_multiplier=200,
+        n_individuals=12,
+        random_start=False,
+        reward_mode="relative",
+        seed=3,
+    )
     obs, _ = env.reset()
-    obs, *_ = env.step(env.relative_baseline_native())
     assert obs["target_algo"] == "PSO"
     assert set(env.relative_baseline_native()) == {"x", "y", "best_x", "best_y"}
 

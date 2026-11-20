@@ -32,11 +32,15 @@ export OPENBLAS_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
 # --- Weights & Biases --------------------------------------------------- #
-# Compute nodes usually have no internet: either provide a key and let it sync,
-# or run offline and `wandb sync` the run dir from a login node afterwards.
-export WANDB_API_KEY=<ADD>             # or: export WANDB_MODE=offline  (then drop this line)
-export WANDB_PROJECT=algorithm-translation
-export WANDB_ENTITY=<ADD>                    # or: unset WANDB_ENTITY
+# Credentials and settings come from the git-ignored `.env` in the project root
+# (copy .env.example), which algorithm_translation/tracking.py loads at startup.
+# Never put the API key in this file. Compute nodes usually have no internet:
+# set WANDB_MODE=offline in .env and `wandb sync` the run dir from a login node
+# afterwards. Note: variables already exported in the job environment (sbatch
+# forwards the submitting shell's) take precedence over .env.
+if [[ ! -f .env ]]; then
+  echo "warning: no .env in $(pwd); W&B will use its own defaults/login" >&2
+fi
 
 # --- train -------------------------------------------------------------- #
 # Currently-suggested configuration: single PSO->CMAES switch, AOCC reward
