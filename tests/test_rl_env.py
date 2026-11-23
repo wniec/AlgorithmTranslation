@@ -5,8 +5,14 @@ the shared population) so no policy is needed."""
 import numpy as np
 import pytest
 
-from algorithm_translation.rl.env import TranslationEnv, scaled_improvement
+from algorithm_translation.rl.env import TranslationEnv
+from algorithm_translation.rl.reward import run_term, scaled_improvement
 from algorithm_translation.suite import IOHSuite, build_problem_ids
+
+
+def _term(result, prev_best, rng_range, measure="aocc"):
+    """Score a segment the way the env does, for a problem with optimum 0."""
+    return run_term(result, prev_best, rng_range, measure=measure, optimum=0.0, decades=4.0)
 
 
 def _env(seed=0):
@@ -84,11 +90,11 @@ def test_post_switch_seed_varies_per_episode():
     seeds = []
     for _ in range(3):
         env.reset()
-        seeds.append(env._seg_seed)
+        seeds.append(env._segment_seeds[0])
     assert len(set(seeds)) == 3
     again = _env(seed=3)
     again.reset()
-    assert again._seg_seed == seeds[0]
+    assert again._segment_seeds[0] == seeds[0]
 
 
 def test_relative_reward_zero_for_baseline_action():
@@ -114,7 +120,7 @@ def test_relative_reward_zero_for_baseline_action():
 
 def test_noswitch_reward_is_signed_over_source_continuing():
     """noswitch reward = translated_score - source_continuing_score: a *signed*
-    difference against the source-continuing reference, NOT the old symmetric
+    difference against the source-continuing reference, not a symmetric
     -|Δ| penalty. It must be finite, bounded (a difference of two AOCC scores in
     [0,1], so in [-1,1]), and able to go strictly negative when the switch
     underperforms the source simply continuing."""
@@ -141,10 +147,9 @@ def test_noswitch_reward_is_signed_over_source_continuing():
     # other way. Shown deterministically via the shared run-scoring (a slow
     # translated run vs a fast source-continuing reference, and vice versa).
     env.reset()
-    env._optimum = 0.0
     prev_best = 10.0
-    slow = env._run_term({"y_history": np.array([9.0] * 49 + [1.0])}, prev_best, env._range)
-    fast = env._run_term({"y_history": np.array([1.0] * 50)}, prev_best, env._range)
+    slow = _term({"y_history": np.array([9.0] * 49 + [1.0])}, prev_best, env._range)
+    fast = _term({"y_history": np.array([1.0] * 50)}, prev_best, env._range)
     assert slow - fast < -1e-9  # translated slow, source continuing fast -> negative
     assert fast - slow > 1e-9  # and strictly positive the other way (signed)
 
@@ -237,7 +242,7 @@ def test_mixed_reward_is_noswitch_plus_relative():
 
 
 def test_log_scaled_reward_properties():
-    from algorithm_translation.rl.env import _log_scale, log_scaled_improvement
+    from algorithm_translation.rl.reward import _log_scale, log_scaled_improvement
 
     # no improvement -> 0; improvement -> positive and monotonic in improvement.
     assert log_scaled_improvement(5.0, 5.0, 4.0) == 0.0
@@ -248,7 +253,7 @@ def test_log_scaled_reward_properties():
     # full-range improvement saturates at log(1 + 1/eps).
     import math
 
-    from algorithm_translation.rl.env import _REWARD_EPS
+    from algorithm_translation.rl.reward import _REWARD_EPS
 
     assert math.isclose(_log_scale(1.0), math.log(1 + 1 / _REWARD_EPS), rel_tol=1e-6)
 
@@ -280,6 +285,7 @@ def _env_independent_sizes(seed=0, n_a=8, n_b=20):
         fe_multiplier=200,
         n_individuals_a=n_a,
         n_individuals_b=n_b,
+        random_start=False,  # PSO -> CMAES first, so the sizes are predictable
         seed=seed,
     )
 
@@ -358,20 +364,13 @@ def test_aocc_is_default_and_bounded():
 def test_aocc_rewards_faster_convergence_over_endpoint():
     """A run that reaches the same endpoint but converges EARLIER scores higher
     under AOCC, while the endpoint measure cannot tell them apart."""
-    env = TranslationEnv(
-        "PSO", "CMAES",
-        build_problem_ids({1}, dims=[2], instances=[1]),
-        IOHSuite(), fe_multiplier=300, seed=0,
-    )
-    env.reset()
-    env._optimum, prev_best = 0.0, 10.0
+    prev_best = 10.0
     # Two runs ending at the same best (1.0) but one converges immediately.
-    fast = {"y_history": np.array([1.0] * 50)}
-    slow = {"y_history": np.array([9.0] * 49 + [1.0])}
-    assert env._run_term(fast, prev_best, env._range) > env._run_term(slow, prev_best, env._range)
-    env.reward_measure = "endpoint"
+    fast = {"y_history": np.array([1.0] * 50), "best_so_far_y": 1.0}
+    slow = {"y_history": np.array([9.0] * 49 + [1.0]), "best_so_far_y": 1.0}
+    assert _term(fast, prev_best, 10.0) > _term(slow, prev_best, 10.0)
     assert np.isclose(
-        env._run_term(fast, prev_best, 10.0), env._run_term(slow, prev_best, 10.0)
+        _term(fast, prev_best, 10.0, "endpoint"), _term(slow, prev_best, 10.0, "endpoint")
     )
 
 
@@ -436,7 +435,8 @@ def test_ela_combines_with_scale_feature():
 def test_normalize_reward_modes_parsing_and_validation():
     """The reward-mode parser: single mode, the 'mixed' alias, comma-separated
     lists (with whitespace), alias-within-list expansion, and the error paths."""
-    norm = TranslationEnv._normalize_reward_modes
+    from algorithm_translation.rl.scoring import normalize_reward_modes as norm
+
     assert norm("relative") == ["relative"]
     assert norm("mixed") == ["noswitch", "relative"]
     assert norm("noswitch,relative") == ["noswitch", "relative"]

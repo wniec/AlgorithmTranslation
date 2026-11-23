@@ -1,5 +1,5 @@
 """Shared CLI argument groups and env/logger construction for train_ppo.py and
-train_td3.py — the two trainers train the same ``TranslationEnv`` (see
+train_grpo.py — the two trainers train the same ``TranslationEnv`` (see
 ``algorithm_translation/rl/env.py``), so problem-set/episode configuration, W&B logging, and
 device/seed/output plumbing are identical between them; only the network and
 algorithm hyperparameters differ (kept in each script)."""
@@ -14,11 +14,12 @@ from collections import defaultdict
 import torch
 from tqdm import tqdm
 
-from algorithm_translation.cli import ALGO_CHOICES
-from algorithm_translation.cli.evaluate import evaluate_heldout
+from algorithm_translation.cli import ALGO_CHOICES, population_sizes
 from algorithm_translation.cli.scenario import add_scenario_args, split_from_args
+from algorithm_translation.evaluation.heldout import evaluate_heldout
 from algorithm_translation.rl.env import TranslationEnv
-from algorithm_translation.suite import IOHSuite
+from algorithm_translation.seeding import Stream, derive_seed
+from algorithm_translation.suite import IOHSuite, problem_dim
 from algorithm_translation.tracking import WandbLogger
 
 
@@ -69,7 +70,7 @@ def add_env_args(p: argparse.ArgumentParser) -> None:
         const="endpoint",
         default="aocc",
         help="score each segment by the best-so-far improvement at its boundary "
-        "only (the original measure). Default is 'aocc' (Area Over the "
+        "only. Default is 'aocc' (Area Over the "
         "Convergence Curve), which rewards converging faster/lower over the "
         "whole segment — so the hand-off's transient value survives a long "
         "single segment instead of being washed out by the target's adaptation.",
@@ -87,8 +88,8 @@ def add_env_args(p: argparse.ArgumentParser) -> None:
         type=int,
         default=1,
         help="average the per-step reward over this many optimizer seeds "
-        "(paired per seed for common random numbers). 1 (default) = original "
-        "single-sample reward. The single-segment reward is a high-variance "
+        "(paired per seed for common random numbers). 1 (default) = a single "
+        "sample. The single-segment reward is a high-variance "
         "difference of stochastic runs, so K>1 cuts reward noise ~1/K — "
         "denoising both the critic target and the policy gradient — at ~Kx the "
         "counterfactual optimizer cost (offset by --n-workers). Seed 0 is the "
@@ -170,7 +171,7 @@ def build_envs(args, train_ids: list[str]) -> list[TranslationEnv]:
     suite = IOHSuite()
     by_dim: dict[int, list[str]] = defaultdict(list)
     for pid in train_ids:
-        by_dim[int(pid.rsplit("_d", 1)[1])].append(pid)
+        by_dim[problem_dim(pid)].append(pid)
     envs = []
     for dim in args.dims:
         ids = by_dim[dim]
@@ -194,7 +195,7 @@ def build_envs(args, train_ids: list[str]) -> list[TranslationEnv]:
                 reward_seeds=getattr(args, "reward_seeds", 1),
                 reward_measure=getattr(args, "reward_measure", "aocc"),
                 aocc_decades=getattr(args, "aocc_decades", 4.0),
-                seed=args.seed * 100 + dim,
+                seed=derive_seed(args.seed, dim, Stream.ENV),
             )
         )
     return envs
@@ -248,9 +249,7 @@ class Checkpointer:
             raise SystemExit("--eval-reps must be >= 1")
         self.eval_reps = int(eval_reps)
         self.logger = logger
-        n_a = args.n_individuals_a if args.n_individuals_a is not None else args.n_individuals
-        n_b = args.n_individuals_b if args.n_individuals_b is not None else args.n_individuals
-        self._n = {args.algo_a: n_a, args.algo_b: n_b}
+        self._n = population_sizes(args)
         self.directions = [(args.algo_a, args.algo_b)]
         if not args.fixed_order:  # training sees both directions -> score both
             self.directions.append((args.algo_b, args.algo_a))
@@ -277,6 +276,7 @@ class Checkpointer:
             reward_measure=getattr(self.args, "reward_measure", "aocc"),
             aocc_decades=getattr(self.args, "aocc_decades", 4.0),
             seed_reps=self.eval_reps,
+            switch_cdb=self.args.switch_cdb,
         )
         metrics = {f"eval/{k}": v for k, v in metrics.items()}
         # Store the scores alongside the weights they belong to.

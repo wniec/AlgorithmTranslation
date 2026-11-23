@@ -1,55 +1,24 @@
-"""Gymnasium environment: a BBOB run with learned optimizer hand-offs.
+"""Gymnasium environment: a BBOB run with one learned optimizer hand-off.
 
-One episode optimizes a single BBOB problem (of a fixed dimension) with exactly
-one hand-off: the source optimizer warms up to a switch point sampled
-log-uniformly over the FE budget, the agent observes its internal state and
-produces the *target* optimizer's internal state (the translation), and the
-target runs from that warm start to the end of the budget. Each episode is a
-single step.
+An episode optimizes a single BBOB problem. A random probe fixes the initial
+incumbent, the source optimizer warms up to a switch point sampled log-uniformly
+over the FE budget, the agent observes the source's internal state and produces
+the *target* optimizer's state (the translation), and the target runs from that
+warm start to the end of the budget. Each episode is a single step.
 
-* **observation** — a dict with the source optimizer's augmented native state,
-  the source/target algorithm names, and a small progress context (fraction of
-  budget used, normalized best-so-far). The policy turns the native state into
-  a ``CanonicalState`` for the encoder; the progress vector is a normalized
-  side-input to the critic.
+* **observation** — the source optimizer's augmented native state, the
+  source/target algorithm names, the target's population size, and a small
+  progress context for the critic (fraction of budget used, normalized
+  best-so-far, optionally a problem-scale channel and ELA features).
 * **action** — the target's full native warm-start dict (shared population +
-  decoded specific fields), assembled by the policy from its decoded state.
-* **reward** — every mode is ``score(translated run) - score(baseline run)``,
-  each run's segment scored by ``reward_measure`` (below), differing only in
-  the baseline:
-    - ``absolute``: baseline 0 — the translated run's own segment score.
-    - ``relative``: baseline = the hand-off available without a network, running
-      the same target: the *computed* warm start for switches into CMA-ES
-      (``algorithm_translation/models/prior.py``), the *lossy default* (shared population only) for
-      other targets. Isolates translation quality — what the action controls —
-      independent of whether switching was wise.
-    - ``noswitch``: baseline = the *source optimizer continuing* (no switch)
-      from its full state. Signed switch-worthiness: positive when the switched
-      + translated run outperforms staying, negative when it underperforms.
-      Outperforming the reference is rewarded, not penalized.
-    - ``coldtarget``: baseline = the *target (second) optimizer run cold* from
-      the very start of the episode to the end of the budget. The no-switch
-      counterpart for the other algorithm — "beat just running the second
-      algorithm alone from scratch" rather than "beat continuing the first".
-    - ``mixed``: the sum of the ``noswitch`` and ``relative`` rewards — the
-      switch is credited both for being worth making (beating the source
-      continuing) and for being well translated (beating the lossy hand-off).
-      Runs both counterfactual optimizers per step (~3x cost).
-  ``reward_mode`` may also be a list (or comma-separated string) of the base
-  modes above, in which case the reward is the sum of those modes' component
-  rewards (each counterfactual run once); ``mixed`` is just the alias for
-  ``["noswitch", "relative"]``. Each component's mean is logged separately.
-  All are scaled by the initial gap to the global optimum (fixed at reset).
-  Each run's segment is scored by ``reward_measure``: the default ``aocc`` (Area
-  Over the Convergence Curve — mean normalized log-precision closed toward the
-  optimum over the segment's evaluations, rewarding faster/lower convergence) or
-  ``endpoint`` (best-so-far improvement at the segment boundary only). The
-  baseline subtraction and mode machinery are identical for both.
+  decoded specific fields), assembled by the policy.
+* **reward** — the translated run's score minus the baseline(s) chosen by
+  ``reward_mode``; see ``rl.scoring`` for the modes and ``rl.reward`` for how a
+  segment is scored.
 
-The observation/action spaces are declared for completeness but the env is meant
-to be driven by the custom loops in ``algorithm_translation.rl.ppo`` /
-``algorithm_translation.rl.td3`` (which read the structured objects), not by a
-generic flat-vector agent.
+The observation/action spaces are declared for completeness; the env is driven
+by the custom loops in ``rl.ppo`` / ``rl.grpo``, which read the structured
+objects directly.
 """
 
 from __future__ import annotations
@@ -61,31 +30,42 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from algorithm_translation.models.prior import prior_native
 from algorithm_translation.optimizers.base import sample_switch_points
-from algorithm_translation.optimizers.portfolio import PORTFOLIO
-from algorithm_translation.rl.reward import (
-    # re-exported for back-compat (tests import these here)
-    _REWARD_EPS,
-    _log_scale,
-    log_scaled_improvement,
-    run_term,
-    scaled_improvement,
-)
-from algorithm_translation.state.canonical import (
-    augment_native,
-    has_full_state,
-    warm_start_optimizer,
-)
+from algorithm_translation.rl.scoring import SwitchPoint, SwitchScorer, normalize_reward_modes
+from algorithm_translation.runs import make_optimizer, problem_cfg
+from algorithm_translation.seeding import Stream, derive_seed
+from algorithm_translation.state.canonical import augment_native, has_full_state
+from algorithm_translation.suite import problem_dim
 from algorithm_translation.suite.ela import ELA_DIM, MAX_HISTORY_SAMPLE, compute_ela_features
 
-__all__ = [
-    "_REWARD_EPS",
-    "TranslationEnv",
-    "_log_scale",
-    "log_scaled_improvement",
-    "scaled_improvement",
-]
+__all__ = ["TranslationEnv", "sample_episode_start"]
+
+
+def sample_episode_start(problem, max_fe: int, pop: int, rng, switch_cdb: float = 1.0):
+    """Draw an episode's switch point and run its agent-independent probe.
+
+    Shared by ``TranslationEnv.reset`` and the held-out evaluator so both place
+    the switch from the same distribution and start the warmup from the same
+    kind of probe. Draws from ``rng`` in a fixed order (switch point, then probe
+    points).
+
+    ``pop`` is a population-size floor for switch-point spacing (room enough
+    for whichever algorithm runs next). Returns ``(switch_fe, x_probe,
+    y_probe)``; the probe is already evaluated and costs ``len(y_probe)`` FEs.
+    """
+    dim = problem.dimension
+    n_probe = min(2 * dim + 8, max(max_fe // 4, dim + 1))
+    # Leave room after the probe for the source to complete a couple of
+    # generations, else it would reach the switch with an empty state.
+    fe_min = min(n_probe + 2 * pop, max(max_fe - pop, n_probe + pop))
+    # Two boundaries: [switch point, max_fe]; only the first is random.
+    switch_fe = int(
+        sample_switch_points(2, max_fe, pop, rng, fe_min=fe_min, cdb=switch_cdb)[0]
+    )
+    lb, ub = problem.lower_bounds, problem.upper_bounds
+    x_probe = rng.uniform(lb, ub, size=(n_probe, dim))
+    y_probe = np.array([problem(x) for x in x_probe], dtype=float)
+    return switch_fe, x_probe, y_probe
 
 
 class TranslationEnv(gym.Env):
@@ -112,69 +92,55 @@ class TranslationEnv(gym.Env):
         aocc_decades: float = 4.0,
         seed: int = 0,
     ):
+        """
+        reward_mode: one mode, an alias or a list of modes to sum (see
+            ``rl.scoring``).
+        random_start: draw the switch direction per episode (False: always
+            ``algo_a -> algo_b``).
+        scale_feature: add log10 of the initial optimum gap to the critic
+            context, so the critic can tell problems of different magnitude
+            apart (the rest of the context is scale-invariant).
+        use_ela: append Exploratory Landscape Analysis features of the points
+            evaluated before the switch to the critic context.
+        reward_seeds: post-switch seeds the reward is averaged over (paired with
+            the baselines per seed); K costs ~K x the target runs for ~1/K of
+            the reward variance.
+        reward_measure: ``aocc`` (area over the convergence curve over the
+            segment) or ``endpoint`` (best-so-far improvement at its end).
+        aocc_decades: how many decades below the gap at the switch earn full
+            AOCC credit.
+        """
         super().__init__()
         if not problem_ids:
             raise ValueError("problem_ids is empty")
-        # reward_mode may be a single mode, the 'mixed' alias, or a list of
-        # modes whose component rewards are summed. Normalize to a flat list of
-        # base modes; 'mixed' expands to [noswitch, relative].
+        if reward_seeds < 1:
+            raise ValueError("reward_seeds must be >= 1")
+        if reward_measure not in ("aocc", "endpoint"):
+            raise ValueError(f"unknown reward_measure {reward_measure!r}")
         self.reward_mode = reward_mode
-        self._component_modes = self._normalize_reward_modes(reward_mode)
-        # Per-direction reward logging applies to any comparable baseline; a
-        # pure (single) 'absolute' reward is scale-varying and not broken out.
+        self._component_modes = normalize_reward_modes(reward_mode)
+        # A pure 'absolute' reward is scale-varying, so it is not compared or
+        # logged per switch direction.
         self.logs_per_direction = self._component_modes != ["absolute"]
         self.algo_a = algo_a
         self.algo_b = algo_b
         self.problem_ids = problem_ids
         self.suite = suite
         self.fe_multiplier = fe_multiplier
-        # n_individuals is the shared fallback; n_individuals_a/b let each
-        # algorithm run with its own population size.
         self.n_individuals = n_individuals
         self.n_a = n_individuals_a if n_individuals_a is not None else n_individuals
         self.n_b = n_individuals_b if n_individuals_b is not None else n_individuals
         self.switch_cdb = switch_cdb
         self.random_start = random_start
-        # scale_feature adds a problem-scale channel (log10 of the fixed initial
-        # optimum gap) to the critic context. The default context is otherwise
-        # scale-INVARIANT (tanh(best/range)), so the critic has no way to tell
-        # problems of different magnitude apart — this exposes that, so it can
-        # capture the between-problem return variance (the EV ceiling).
         self.scale_feature = scale_feature
-        # use_ela appends 22 Exploratory Landscape Analysis features (pflacco),
-        # computed from the points evaluated so far this episode (up to the
-        # current switch, capped at MAX_HISTORY_SAMPLE), to the critic context.
-        # Unlike the scale channel these are *landscape* descriptors (linearity,
-        # multimodality, dispersion, information content), which correlate with
-        # the fractional improvement a problem allows — the between-problem
-        # structure that caps explained variance. Critic-side only.
         self.use_ela = use_ela
         self.context_dim = 2 + int(scale_feature) + (ELA_DIM if use_ela else 0)
-        # Number of optimizer seeds the per-step reward is averaged over (paired
-        # per seed for CRN). 1 = single-sample (original). >1 trades ~K x the
-        # counterfactual optimizer runs for ~1/K reward variance.
-        if reward_seeds < 1:
-            raise ValueError("reward_seeds must be >= 1")
         self.reward_seeds = int(reward_seeds)
-        # How each run's per-segment score is measured, before the baseline
-        # subtraction and log/scale:
-        #   'aocc' (default) — Area Over the Convergence Curve: the mean, over
-        #     the segment's evaluations, of the normalized log-precision closed
-        #     toward the optimum. Rewards converging FASTER/LOWER, so the value
-        #     of the hand-off (which lives in the transient) survives even one
-        #     long segment, where the endpoint washes out. Bounded [0, 1].
-        #   'endpoint' — the original: log-scaled best-so-far improvement at the
-        #     segment boundary only.
-        if reward_measure not in ("aocc", "endpoint"):
-            raise ValueError(f"unknown reward_measure {reward_measure!r}")
         self.reward_measure = reward_measure
-        # AOCC log-precision span: how many decades of the gap-at-switch map onto
-        # [0, 1]. The floor g_lo = g_hi * 10**(-aocc_decades).
         self.aocc_decades = float(aocc_decades)
         self._seed = seed
-        self.dim = self._parse_dim(problem_ids[0])
+        self.dim = problem_dim(problem_ids[0])
 
-        # Declared for completeness; the custom RL loops read structured objects.
         self.observation_space = spaces.Dict(
             {
                 "context": spaces.Box(
@@ -184,35 +150,23 @@ class TranslationEnv(gym.Env):
         )
         self.action_space = spaces.Box(-np.inf, np.inf, shape=(1,), dtype=np.float32)
 
-        self._problem_idx = 0
+        self._problem_idx = 0  # episodes started so far
+        self._order_pass = None  # pass number whose permutation is cached
+        self._order = None
         self._reset_episode_state()
 
-    @staticmethod
-    def _parse_dim(pid: str) -> int:
-        return int(pid.split("_d")[-1])
-
-    # Base reward modes and the composite aliases that expand into them.
-    _BASE_REWARD_MODES = ("absolute", "noswitch", "relative", "coldtarget")
-    _REWARD_ALIASES: ClassVar[dict] = {"mixed": ["noswitch", "relative"]}
-
-    @classmethod
-    def _normalize_reward_modes(cls, reward_mode) -> list[str]:
-        """Flatten ``reward_mode`` (a single mode, the 'mixed' alias, or a list
-        of modes to sum) into a list of base modes. A comma-separated string is
-        accepted as a list. Validates every resulting mode."""
-        if isinstance(reward_mode, str):
-            items = [m.strip() for m in reward_mode.split(",") if m.strip()]
-        else:
-            items = [str(m).strip() for m in reward_mode]
-        if not items:
-            raise ValueError("reward_mode is empty")
-        modes: list[str] = []
-        for m in items:
-            modes.extend(cls._REWARD_ALIASES.get(m, [m]))
-        for m in modes:
-            if m not in cls._BASE_REWARD_MODES:
-                raise ValueError(f"unknown reward_mode {m!r}")
-        return modes
+    def _problem_at(self, idx: int) -> str:
+        """The problem for episode ``idx``. Each pass over ``problem_ids`` uses
+        a fresh permutation seeded by (env seed, pass number), so envs with
+        different seeds (e.g. parallel rollout workers) walk the problems in
+        different orders, while every pass visits each problem exactly once."""
+        n = len(self.problem_ids)
+        pass_no, pos = divmod(idx, n)
+        if self._order_pass != pass_no:
+            rng = np.random.default_rng(derive_seed(self._seed, pass_no, Stream.PROBLEM_ORDER))
+            self._order = rng.permutation(n)
+            self._order_pass = pass_no
+        return self.problem_ids[int(self._order[pos])]
 
     def _reset_episode_state(self):
         self._problem = None
@@ -221,45 +175,30 @@ class TranslationEnv(gym.Env):
         self._n_fe = 0
         self._best_y = float("inf")
         self._best_x = None
-        self._range = 1.0
-        self._optimum = None  # global optimum value when the suite exposes it (for AOCC)
+        self._range = 1.0  # reward scale, fixed at the switch
+        self._optimum = None  # global optimum value, when the suite exposes it
         self._switch_fe = None
-        self._seg_seed = None  # optimizer seed for this episode's post-switch runs
+        self._segment_seeds: list[int] = []  # post-switch seeds, one per reward seed
+        self._scorer: SwitchScorer | None = None
         self._done = False
         self._src_native = None
         self._src_algo = None
         self._tgt_algo = None
-        self._hist_x = None  # accumulated evaluated points this episode (for ELA)
+        self._hist_x = None  # evaluated points this episode (for ELA)
         self._hist_y = None
-
-    # ------------------------------------------------------------------ #
 
     def _n_for(self, algo: str) -> int | None:
         return self.n_a if algo == self.algo_a else self.n_b
 
-    def _make_optimizer(self, algo: str, target_fe: int, seed_rng: int):
-        options = {
-            "max_function_evaluations": self._max_fe,
-            "target_fe": int(target_fe),
-            "best_so_far_y": self._best_y
-            if self._best_y < float("inf")
-            else float("inf"),
-            "seed_rng": seed_rng,
-            "verbose": False,
-        }
-        n = self._n_for(algo)
-        if n is not None:
-            options["n_individuals"] = n
-        opt = PORTFOLIO[algo](self._cfg, options)
-        opt.n_function_evaluations = self._n_fe
-        return opt
+    # ------------------------------------------------------------------ #
+    # observation                                                         #
+    # ------------------------------------------------------------------ #
 
     def _accumulate_history(self, result: dict) -> None:
         """Append a run's evaluated points to the episode history (for ELA).
 
-        Only the *real* (acted) trajectory feeds the history — counterfactual
-        baseline runs are hypothetical and must not pollute the landscape
-        sample. Keeps the most recent ``MAX_HISTORY_SAMPLE`` points."""
+        Only the acted trajectory feeds the history; counterfactual runs are
+        hypothetical. Keeps the most recent ``MAX_HISTORY_SAMPLE`` points."""
         if not self.use_ela:
             return
         xh = result.get("x_history")
@@ -284,14 +223,9 @@ class TranslationEnv(gym.Env):
         best = self._best_y if np.isfinite(self._best_y) else 0.0
         ctx = [frac, np.tanh(best / max(self._range, 1e-9))]
         if self.scale_feature:
-            # Absolute problem scale (fixed per episode): lets the critic tell
-            # problems of different magnitude apart. obs_rms standardizes it.
             ctx.append(float(np.log10(max(self._range, 1e-12))))
         if self.use_ela:
-            # Landscape features of the samples gathered up to this switch.
-            # obs_rms standardizes them (their natural scales vary wildly).
-            # ``include_ela`` is False for the unused terminal observation, to
-            # skip the (expensive) pflacco call where its value is never read.
+            # The terminal observation is never read: skip the pflacco call.
             ela = self._ela() if include_ela else np.zeros(ELA_DIM, dtype=np.float32)
             ctx.extend(float(v) for v in ela)
         return {
@@ -302,248 +236,134 @@ class TranslationEnv(gym.Env):
             "context": np.array(ctx, dtype=np.float32),
         }
 
+    # ------------------------------------------------------------------ #
+    # episode                                                             #
+    # ------------------------------------------------------------------ #
+
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        pid = self.problem_ids[self._problem_idx % len(self.problem_ids)]
+        episode = self._problem_idx
+        self._problem_idx += 1
+        pid = self._problem_at(episode)
         self._reset_episode_state()
         self._problem = self.suite.get_problem(pid)
         dim = self._problem.dimension
-        self._cfg = {
-            "fitness_function": self._problem,
-            "ndim_problem": dim,
-            "lower_boundary": self._problem.lower_bounds,
-            "upper_boundary": self._problem.upper_bounds,
-        }
+        self._cfg = problem_cfg(self._problem)
         self._max_fe = self.fe_multiplier * dim
-        # Conservative floor for switch-point spacing/probe sizing: room enough
-        # regardless of which algo (with its own population size) runs next.
+        # Switch-spacing floor: room for whichever algorithm runs next.
         pop = max(self.n_a or 20, self.n_b or 20)
 
-        base = (self._seed * 1_000_003 + self._problem_idx) % (2**31)
-        sw_rng = np.random.default_rng(base)
-        # Post-switch runs (translated + counterfactual baselines) get their own
-        # per-episode seed, distinct from the warmup's ``base + 1``.
-        self._seg_seed = int(np.random.SeedSequence([base, 1]).generate_state(1)[0] % (2**31))
-        self._problem_idx += 1
+        rng = np.random.default_rng(derive_seed(self._seed, episode, Stream.EPISODE))
+        self._segment_seeds = [
+            derive_seed(self._seed, episode, Stream.SEGMENT, j)
+            for j in range(self.reward_seeds)
+        ]
 
-        # Which algorithm does the cold warmup, i.e. which direction the single
-        # switch translates. Randomizing it per episode trains both directions;
-        # with random_start=False every episode is algo_a -> algo_b.
-        if self.random_start and sw_rng.random() < 0.5:
+        if self.random_start and rng.random() < 0.5:
             start_algo, other_algo = self.algo_b, self.algo_a
         else:
             start_algo, other_algo = self.algo_a, self.algo_b
 
-        # Agent-independent probe: fixes best/scale before the agent acts.
-        n_probe = min(2 * dim + 8, max(self._max_fe // 4, dim + 1))
-        # The warmup segment must leave room (after the probe) for the source
-        # optimizer to complete at least a couple of generations, else it would
-        # return an empty state. Bound the earliest switch boundary accordingly.
-        fe_min = min(n_probe + 2 * pop, max(self._max_fe - pop, n_probe + pop))
-        # Two boundaries: [switch point, max_fe]; the second is always max_fe.
-        self._switch_fe = int(
-            sample_switch_points(
-                2, self._max_fe, pop, sw_rng, fe_min=fe_min, cdb=self.switch_cdb
-            )[0]
+        self._switch_fe, x_probe, y_probe = sample_episode_start(
+            self._problem, self._max_fe, pop, rng, self.switch_cdb
         )
-
-        lb, ub = self._problem.lower_bounds, self._problem.upper_bounds
-        x_probe = sw_rng.uniform(lb, ub, size=(n_probe, dim))
-        y_probe = np.array([self._problem(x) for x in x_probe], dtype=float)
         i_best = int(np.argmin(y_probe))
         self._best_y = float(y_probe[i_best])
         self._best_x = x_probe[i_best]
-        self._n_fe = n_probe
+        self._n_fe = len(y_probe)
         if self.use_ela:
-            self._hist_x, self._hist_y = x_probe, y_probe  # seed the ELA history
+            self._hist_x, self._hist_y = x_probe, y_probe
 
-        # Warm up the first algorithm (cold) to build a genuine source state.
-        warmup = self._make_optimizer(start_algo, self._switch_fe, base + 1)
+        # Warm up the first algorithm (cold, knowing the probe's best) to build
+        # a genuine source state at the switch.
+        warmup = make_optimizer(
+            start_algo,
+            self._cfg,
+            max_fe=self._max_fe,
+            target_fe=self._switch_fe,
+            seed=derive_seed(self._seed, episode, Stream.WARMUP),
+            n_individuals=self._n_for(start_algo),
+            best_y=self._best_y,
+            n_fe_start=self._n_fe,
+        )
         warmup.set_data(best_x=self._best_x, best_y=self._best_y)
         result = warmup.optimize()
         self._update_best(result)
         self._n_fe = result.get("n_function_evaluations", self._n_fe)
         self._accumulate_history(result)
 
-        # Reward scale = remaining distance to the global optimum at the end of
-        # the first optimization period (the warmup). Improvements over the rest
-        # of the episode are measured as a fraction of this initial gap. Falls
-        # back to a probe-spread range on suites that don't expose the optimum.
+        # Reward scale: the remaining gap to the optimum at the switch (or, on
+        # suites without a known optimum, the probe's spread).
         optimum = getattr(self._problem, "optimum", None)
         if optimum is not None:
             self._optimum = float(optimum)
             self._range = max(self._best_y - self._optimum, 1e-12)
         else:
-            self._optimum = None
             self._range = max(float(np.median(y_probe)) - self._best_y, 1e-5)
 
         self._src_native = augment_native(warmup, dim)
         self._src_algo = start_algo
         self._tgt_algo = other_algo
-        self._done = False
+        self._scorer = SwitchScorer(
+            SwitchPoint(
+                cfg=self._cfg,
+                max_fe=self._max_fe,
+                n_fe=self._n_fe,
+                best_y=self._best_y,
+                scale=self._range,
+                optimum=self._optimum,
+                source_algo=start_algo,
+                target_algo=other_algo,
+                source_native=self._src_native,
+                n_source=self._n_for(start_algo),
+                n_target=self._n_for(other_algo),
+            ),
+            modes=self._component_modes,
+            seeds=self._segment_seeds,
+            measure=self.reward_measure,
+            decades=self.aocc_decades,
+        )
         return self._observation(), {"problem_id": pid, "dimension": dim}
 
     def step(self, action_native: dict):
-        """``action_native`` is the target's full warm-start dict (shared + specific)."""
-        if self._done:
-            raise RuntimeError("the episode's single switch is done; call reset()")
+        """Hand ``action_native`` (the target's warm-start dict) to the target,
+        run it to the end of the budget and end the episode."""
+        scored = self._score(action_native)
+        # The first seed's run is the episode outcome. Roles swap only so the
+        # terminal observation is well formed; it is never acted on.
         target = self._tgt_algo
-        prev_best = self._best_y
-        target_fe = self._max_fe
-        # Compute the reward BEFORE mutating episode state, so every
-        # counterfactual is constructed from the same pre-segment best / FE.
-        rng = max(self._range, 1e-12)
-
-        # Seed-average the reward. The single-segment reward is a difference of
-        # stochastic optimizer runs, so one sample has enormous variance
-        # (observed return std >> mean) — which buries both the critic target
-        # and the policy gradient in noise. Running the acted segment (and, per
-        # mode, each counterfactual baseline) over ``reward_seeds`` seeds and
-        # averaging the per-seed component rewards cuts that noise ~1/K. Each
-        # seed j pairs the translated run with its baselines under the SAME seed
-        # (base_seg_seed + j), preserving the common-random-numbers cancellation
-        # within a seed. Seed j == 0 is the run recorded as the episode's
-        # outcome (best-so-far, FE count); the other K-1 translated
-        # runs serve the reward estimate only, like the counterfactuals — so
-        # reward_seeds == 1 reproduces the previous single-sample behaviour.
-        base_seg_seed = self._seg_seed
-        translated_terms: list[float] = []
-        advance_opt = advance_result = None
-        for j in range(self.reward_seeds):
-            opt = self._make_optimizer(target, target_fe, base_seg_seed + j)
-            warm_start_optimizer(opt, action_native)
-            result = opt.optimize()
-            translated_terms.append(self._run_term(result, prev_best, rng))
-            if j == 0:
-                advance_opt, advance_result = opt, result
-
-        # Each baseline is a counterfactual improvement, log-scaled the same way
-        # as the translated run; the mode selects which reference(s) to subtract.
-        #   noswitch: the *source* optimizer continuing (no switch) from its full
-        #     state over the same segment — a REFERENCE, not a trajectory to
-        #     imitate. Signed: outperforming it is rewarded, underperforming is
-        #     penalized, but a genuinely better switch is *not* punished for
-        #     deviating (unlike the old -|Δ| form).
-        #   relative: the same target run from the hand-off available without a
-        #     network (same seed; see relative_baseline_native). Isolates exactly
-        #     what the action controls — translation quality, independent of
-        #     whether switching was wise.
-        #   coldtarget: the *target* (second) optimizer run cold from the very
-        #     start of the episode to the end of the budget — the no-switch
-        #     counterpart for the *other* algorithm. Like noswitch (signed
-        #     switch-worthiness), but the reference is "just run the second
-        #     algorithm alone from scratch" rather than "keep running the first".
-        #   mixed: an alias for the list [noswitch, relative] — the switch is
-        #     credited both for being worth making and for being well translated.
-        # A reward_mode that lists several of these modes sums their component
-        # rewards; 'mixed' is the [noswitch, relative] case. Every component is
-        # itself averaged over the reward_seeds seeds (paired per seed). The
-        # per-component means are exposed in reward_parts for separate logging.
-        components = {
-            mode: float(
-                np.mean(
-                    [
-                        self._reward_component(
-                            mode, target, target_fe, base_seg_seed + j,
-                            prev_best, rng, translated_terms[j],
-                        )
-                        for j in range(self.reward_seeds)
-                    ]
-                )
-            )
-            for mode in self._component_modes
-        }
-        reward = float(sum(components.values()))
-        reward_parts = components if len(components) > 1 else None
-
-        # Record the seed-0 run as the episode's outcome (best-so-far, FE count,
-        # final state). Roles swap only so the returned terminal observation is
-        # well formed; it is never acted on.
-        self._update_best(advance_result)
-        self._n_fe = advance_result.get("n_function_evaluations", self._n_fe)
-        self._src_native = augment_native(advance_opt, self.dim)
+        self._update_best(scored.result)
+        self._n_fe = scored.result.get("n_function_evaluations", self._n_fe)
+        self._src_native = augment_native(scored.optimizer, self.dim)
         self._src_algo = target
         self._tgt_algo = self.algo_a if target == self.algo_b else self.algo_b
         self._done = True
 
-        terminated = True
-        info = {"best_y": self._best_y, "n_fe": self._n_fe, "reward": reward}
-        if reward_parts is not None:
-            info["reward_parts"] = reward_parts
-        # The only step is terminal, so its observation is never acted on: skip
-        # the (expensive) ELA computation for it.
+        info = {"best_y": self._best_y, "n_fe": self._n_fe, "reward": scored.reward}
+        if len(scored.components) > 1:
+            info["reward_parts"] = scored.components
         obs = self._observation(include_ela=False)
-        return obs, reward, terminated, False, info
+        return obs, scored.reward, True, False, info
 
-    def _reward_component(
-        self, mode, target, target_fe, seg_seed, prev_best, rng, translated_term
-    ) -> float:
-        """Single-mode reward: log_scale(translated) - log_scale(baseline), with
-        the baseline selected by ``mode``. The additive building block summed
-        over ``self._component_modes`` to form the step reward."""
-        if mode == "absolute":
-            return translated_term
-        if mode == "noswitch":
-            return translated_term - self._noswitch_term(target_fe, seg_seed, prev_best, rng)
-        if mode == "relative":
-            return translated_term - self._relative_term(
-                target, target_fe, seg_seed, prev_best, rng
-            )
-        if mode == "coldtarget":
-            return translated_term - self._coldtarget_term(
-                target, target_fe, seg_seed, prev_best, rng
-            )
-        raise ValueError(f"unknown reward component {mode!r}")
+    def evaluate_action(self, action_native: dict) -> tuple[float, dict]:
+        """Score a candidate hand-off WITHOUT advancing the episode: returns
+        ``(reward, info)`` as ``step`` would, leaving the env at the switch so
+        more candidates can be scored from the same state (GRPO). All candidates
+        share the post-switch seeds, and the baselines are run once."""
+        scored = self._score(action_native)
+        info = {"reward": scored.reward}
+        if len(scored.components) > 1:
+            info["reward_parts"] = scored.components
+        return scored.reward, info
 
-    def _run_term(self, result: dict, prev_best: float, rng: float) -> float:
-        """Score one optimizer run's segment via ``algorithm_translation.rl.reward.run_term``, with
-        this env's measure/optimum/decades — the building block every mode's
-        translated/baseline term shares, so they stay comparable within a step."""
-        return run_term(
-            result,
-            prev_best,
-            rng,
-            measure=self.reward_measure,
-            optimum=self._optimum,
-            decades=self.aocc_decades,
-        )
-
-    def _noswitch_term(self, target_fe, seg_seed, prev_best, rng) -> float:
-        """Score of the *source* optimizer continuing (no switch) from its own
-        full state over the same segment — the 'noswitch' reference. Does not
-        advance the episode."""
-        opt = self._make_optimizer(self._src_algo, target_fe, seg_seed)
-        warm_start_optimizer(opt, self._src_native)
-        return self._run_term(opt.optimize(), prev_best, rng)
+    def _score(self, action_native: dict):
+        if self._done or self._scorer is None:
+            raise RuntimeError("no switch to score: call reset() first")
+        return self._scorer.score(action_native)
 
     def relative_baseline_native(self, seed: int = 0) -> dict:
-        """The current switch's 'relative' reference hand-off. Into CMA-ES it is the
-        computed warm start: the lossy default leaves CMA-ES a random mean, which
-        amounts to a restart. Other targets get the shared population only."""
-        n, target = self._src_native, self._tgt_algo
-        if target == "CMAES":
-            return prior_native(
-                self._src_algo, n, self._n_for(target), np.random.default_rng(seed)
-            )
-        return {"x": n["x"], "y": n["y"], "best_x": n["best_x"], "best_y": n["best_y"]}
-
-    def _relative_term(self, target, target_fe, seg_seed, prev_best, rng) -> float:
-        """Score of ``relative_baseline_native`` running the same target over the
-        same segment — the 'relative' reference. Does not advance the episode."""
-        opt = self._make_optimizer(target, target_fe, seg_seed)
-        warm_start_optimizer(opt, self.relative_baseline_native(seg_seed))
-        return self._run_term(opt.optimize(), prev_best, rng)
-
-    def _coldtarget_term(self, target, target_fe, seg_seed, prev_best, rng) -> float:
-        """Score of the *target* (second) optimizer running cold from the very
-        start (FE 0, no warm start) to the end of the budget — the 'coldtarget'
-        reference. Does not advance the episode."""
-        opt = self._make_optimizer(target, target_fe, seg_seed)
-        # Override the episode-state seeding _make_optimizer applies: run the
-        # algorithm from scratch, with no prior best and the full FE budget.
-        opt.n_function_evaluations = 0
-        opt.best_so_far_y = float("inf")
-        return self._run_term(opt.optimize(), prev_best, rng)
+        """The current switch's network-free hand-off (see ``rl.scoring``)."""
+        return self._scorer.relative_baseline_native(seed)
 
     def _update_best(self, result: dict):
         new_best = result.get("best_so_far_y", float("inf"))

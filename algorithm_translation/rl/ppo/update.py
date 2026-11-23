@@ -11,6 +11,7 @@ import torch.nn.functional as F
 
 from algorithm_translation.rl.policy import ActorCritic
 from algorithm_translation.rl.ppo.config import PPOConfig, Transition
+from algorithm_translation.seeding import Stream, derive_seed
 
 
 def explained_variance(y_pred, y_true) -> float:
@@ -32,29 +33,74 @@ def _group_key(tr: Transition):
     return (tr.step.target_algo, s.d, s.n)
 
 
-def update(ac: ActorCritic, opt, transitions: list[Transition], cfg: PPOConfig) -> dict:
-    device = torch.device(cfg.device)
-    # Normalize advantages into a local array indexed by position — never mutate
-    # Transition.adv, since records persist across updates (sliding-window
-    # buffer) and the stored raw GAE must survive for the next update.
-    advs = torch.tensor([t.adv for t in transitions], dtype=torch.float32)
-    norm_advs = ((advs - advs.mean()) / (advs.std() + 1e-8)).tolist()
-
-    # Critic diagnostic: how much of the return variance the value function
-    # explains, using the collection-time value predictions against the GAE
-    # return targets. ~0 means the critic predicts little beyond the mean (so
-    # the advantages are mostly noise); computed once over the whole window.
-    ev = explained_variance(
-        [t.step.value for t in transitions], [t.ret for t in transitions]
+def _batch_inputs(transitions, mb, device):
+    states = [transitions[i].step.src_state.to(device) for i in mb]
+    contexts = torch.tensor(
+        np.stack([transitions[i].context for i in mb]),
+        dtype=torch.float32,
+        device=device,
     )
+    return states, states[0].algo, contexts  # source constant within a group
 
+
+def _refresh_targets(ac, transitions, groups, cfg, ret_rms, device):
+    """Value targets and advantages under the *current* critic and reward scale.
+
+    Records live in the sliding-window buffer for several updates; the
+    advantage stored at collection (``r - V_old(s)``, with ``r`` scaled by the
+    return std of that moment) goes stale as the critic and ``ret_rms`` move.
+    Every episode is a single terminal step (enforced in the rollout), so the
+    GAE return is just the scaled reward and the advantage is
+    ``r_scaled - V_now(s)`` — cheap to recompute for the whole window each
+    update. Returns ``(values, returns, advantages)`` as float32 tensors indexed
+    like ``transitions``."""
+    scale = float(ret_rms.std.item()) + 1e-8 if ret_rms is not None else 1.0
+    rets = torch.tensor([t.reward / scale for t in transitions], dtype=torch.float32)
+    values = torch.zeros(len(transitions), dtype=torch.float32)
+    with torch.no_grad():
+        for idxs in groups.values():
+            for start in range(0, len(idxs), cfg.minibatch_size):
+                mb = idxs[start : start + cfg.minibatch_size]
+                states, source_algo, contexts = _batch_inputs(transitions, mb, device)
+                values[mb] = ac.values(states, source_algo, contexts).float().cpu()
+    return values, rets, rets - values
+
+
+def update(
+    ac: ActorCritic,
+    opt,
+    transitions: list[Transition],
+    cfg: PPOConfig,
+    ret_rms=None,
+    update_idx: int = 0,
+) -> dict:
+    """One PPO update over the buffered ``transitions``.
+
+    ``ret_rms`` is the live return-std estimator (None without reward
+    normalization), used to rescale every buffered reward consistently.
+    ``update_idx`` varies the minibatch shuffle from update to update."""
+    device = torch.device(cfg.device)
     groups: dict[tuple, list[int]] = defaultdict(list)
     for i, tr in enumerate(transitions):
         groups[_group_key(tr)].append(i)
 
-    gen = torch.Generator().manual_seed(cfg.seed)
+    values_now, rets_all, advs = _refresh_targets(
+        ac, transitions, groups, cfg, ret_rms, device
+    )
+    norm_advs = ((advs - advs.mean()) / (advs.std() + 1e-8)).tolist()
+    rets_list = rets_all.tolist()
+    values_list = values_now.tolist()
+
+    # Critic diagnostic: how much of the return variance the value function
+    # explains, using the update-start value predictions against the return
+    # targets. ~0 means the critic predicts little beyond the mean (so the
+    # advantages are mostly noise); computed once over the whole window.
+    ev = explained_variance(values_list, rets_list)
+
+    # A fresh shuffle each update (seeding with cfg.seed alone would replay the
+    # same minibatch permutation every update).
+    gen = torch.Generator().manual_seed(derive_seed(cfg.seed, update_idx, Stream.MINIBATCH))
     metrics = defaultdict(float)
-    policy_stds: list[float] = []
     # Effective (population-conditioned) exploration std, aggregated over the
     # update's minibatches — this is what actually varies now that the std is
     # state-dependent, so it, not just the per-segment base, shows adaptivity.
@@ -67,15 +113,9 @@ def update(ac: ActorCritic, opt, transitions: list[Transition], cfg: PPOConfig) 
             idxs = [idxs[o] for o in order]
             for start in range(0, len(idxs), cfg.minibatch_size):
                 mb = idxs[start : start + cfg.minibatch_size]
-                states = [transitions[i].step.src_state.to(device) for i in mb]
-                source_algo = states[0].algo  # constant within a target-keyed group
+                states, source_algo, contexts = _batch_inputs(transitions, mb, device)
                 actions = torch.stack([transitions[i].step.action for i in mb]).to(
                     device
-                )
-                contexts = torch.tensor(
-                    np.stack([transitions[i].context for i in mb]),
-                    dtype=torch.float32,
-                    device=device,
                 )
                 old_logp = torch.tensor(
                     [transitions[i].step.log_prob for i in mb],
@@ -83,15 +123,13 @@ def update(ac: ActorCritic, opt, transitions: list[Transition], cfg: PPOConfig) 
                     device=device,
                 )
                 old_value = torch.tensor(
-                    [transitions[i].step.value for i in mb],
-                    dtype=torch.float32,
-                    device=device,
+                    [values_list[i] for i in mb], dtype=torch.float32, device=device
                 )
                 adv = torch.tensor(
                     [norm_advs[i] for i in mb], dtype=torch.float32, device=device
                 )
                 ret = torch.tensor(
-                    [transitions[i].ret for i in mb], dtype=torch.float32, device=device
+                    [rets_list[i] for i in mb], dtype=torch.float32, device=device
                 )
 
                 logp, entropy, value, std = ac.evaluate_actions(
@@ -136,25 +174,9 @@ def update(ac: ActorCritic, opt, transitions: list[Transition], cfg: PPOConfig) 
     n_batches = max(n_batches, 1)
     out = {k: v / n_batches for k, v in metrics.items()}
     out["explained_variance"] = ev
-    # Log the exploration scale (policy std) rather than the summed differential
-    # entropy: std is sign-stable and independent of the action dimension, which
-    # varies across (PSO/CMA-ES)-target groups. The summary spread ranges over
-    # the per-segment stds (ActorCritic.log_std) at the end of the update — the
-    # segments are what can actually diverge from one another; each also gets its
-    # own named series so the individual field kinds are visible.
-    with torch.no_grad():
-        for algo, p in ac.log_std.items():
-            seg_std = p.exp()
-            for name, s in zip(
-                ac.translator.decoders[algo].segment_names(), seg_std.tolist(), strict=True
-            ):
-                out[f"policy_std/{algo}.{name}"] = s
-            policy_stds.extend(seg_std.tolist())
-    stds = np.asarray(policy_stds) if policy_stds else np.zeros(1)
-    out["policy_std"] = float(stds.mean())
-    out["policy_std_median"] = float(np.median(stds))
-    out["policy_std_min"] = float(stds.min())
-    out["policy_std_max"] = float(stds.max())
+    # Log the exploration scale (std) rather than the summed differential
+    # entropy: std is sign-stable and independent of the action dimension.
+    out.update(ac.std_summary())
     # Effective per-coordinate std (base + population-conditioned residual): its
     # min/max spread over the update is the visible signature of the adaptivity.
     if eff_std["n"]:

@@ -1,11 +1,13 @@
 """Shared helpers for building and (de)serializing the state translator.
 
-The translator is trained by the RL trainers (``train_ppo.py`` / ``train_td3.py``);
+The translator is trained by the RL trainers (``train_ppo.py`` / ``train_grpo.py``);
 this module holds the device resolution and checkpoint round-tripping they and
-``evaluate.py`` share.
+the evaluators share.
 """
 
 from __future__ import annotations
+
+import os
 
 import torch
 
@@ -28,6 +30,20 @@ def resolve_device(name: str = "auto") -> str:
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
+def resolve_model_path(model: str | None, algo_a: str, algo_b: str) -> str:
+    """``model`` if given; otherwise the one checkpoint the trainers save by
+    default for this pair (``models/<A>_<B>_{ppo,grpo}.pt``). Exits with a
+    message when there is none, or both exist."""
+    if model:
+        return model
+    candidates = [os.path.join("models", f"{algo_a}_{algo_b}_{t}.pt") for t in ("ppo", "grpo")]
+    found = [c for c in candidates if os.path.exists(c)]
+    if len(found) == 1:
+        return found[0]
+    reason = "none of" if not found else "several of"
+    raise SystemExit(f"--model not given and {reason} {candidates} exist; pass --model")
+
+
 def translator_meta(pair: TranslatorPair) -> dict:
     """Architecture hyperparameters needed to rebuild a TranslatorPair."""
     enc = pair.encoders[pair.algo_a]
@@ -44,7 +60,7 @@ def translator_meta(pair: TranslatorPair) -> dict:
 def load_translator(path: str, device="cpu") -> TranslatorPair:
     """Rebuild a TranslatorPair from an RL checkpoint.
 
-    The RL trainers (train_ppo.py, train_td3.py) store the actor's TranslatorPair
+    The RL trainers (train_ppo.py, train_grpo.py) store the actor's TranslatorPair
     under the ``state_dict`` key, so this loads either transparently.
     """
     ckpt = torch.load(path, map_location=device, weights_only=False)

@@ -75,7 +75,7 @@ def _train_loop(ac, envs, cfg, opt, ep_rng, ret_rms, obs_rms, buffer, log,
                 ac, envs, cfg, ep_rng, ret_rms, obs_rms
             )
         buffer.extend(fresh)
-        m = update(ac, opt, buffer.as_list(), cfg)
+        m = update(ac, opt, buffer.as_list(), cfg, ret_rms=ret_rms, update_idx=u)
         m["update"] = u
         # Report the raw return of the freshly collected episodes only, so the
         # learning curve reflects the current policy (not stale window records).

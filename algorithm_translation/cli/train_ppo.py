@@ -10,21 +10,21 @@ against a baseline chosen by --reward-mode, so the network learns useful
 hand-offs by optimizing the real (non-differentiable) objective directly.
 
 PPO's action is a stochastic Gaussian over the translator's decoded fields,
-trained on-policy. See train_td3.py for an off-policy alternative that trains
-the same continuous action deterministically with twin critics + a replay
-buffer; shared CLI/env-building logic lives in algorithm_translation/cli/common.py.
+trained on-policy. See train_grpo.py for a critic-free alternative that scores
+a group of sampled translations per switch state and uses group-relative
+advantages; shared CLI/env-building logic lives in algorithm_translation/cli/common.py.
 
 Saves a checkpoint compatible with `uv run eval` (`models/<A>_<B>_ppo.pt`).
 """
 
 from __future__ import annotations
 
-import argparse
 import os
 
 import numpy as np
 import torch
 
+from algorithm_translation.cli import make_parser
 from algorithm_translation.cli.common import (
     Checkpointer,
     add_algo_args,
@@ -43,7 +43,7 @@ from algorithm_translation.train_loop import resolve_device, translator_meta
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description=__doc__)
+    p = make_parser(description=__doc__)
     add_algo_args(p)
     add_env_args(p)
     # network
@@ -96,9 +96,9 @@ def parse_args():
         "--vf-clip",
         type=float,
         default=None,
-        help="value-function clip window, decoupled from --clip. Default: none "
-        "(no value clipping — frees the critic to track wide returns). Pass 0.2 "
-        "to reproduce the old throttle, or a larger value for a looser window.",
+        help="value-function clip window, separate from --clip. Default: none "
+        "(no value clipping, so the critic can track wide returns). A small "
+        "window such as 0.2 throttles the critic; larger values are looser.",
     )
     p.add_argument(
         "--scale-feature",

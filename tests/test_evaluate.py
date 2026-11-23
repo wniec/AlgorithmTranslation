@@ -7,10 +7,9 @@ import math
 
 import torch
 
-from algorithm_translation.cli.evaluate import (
+from algorithm_translation.evaluation.heldout import (
     evaluate_problem,
     heldout_metrics,
-    translate_single,
     translate_with_action,
 )
 from algorithm_translation.models.norm import NormContext
@@ -42,7 +41,7 @@ def test_rl_checkpoint_roundtrips_through_load_translator(tmp_path, pso_native):
         assert torch.equal(ref[k].cpu(), got[k].cpu()), k
 
     # The reloaded translator produces a usable target state.
-    out = translate_single(loaded, to_canonical("PSO", pso_native), "CMAES")
+    out, _ = translate_with_action(loaded, to_canonical("PSO", pso_native), "CMAES")
     assert out.algo == "CMAES"
     assert torch.isfinite(out.positions).all()
 

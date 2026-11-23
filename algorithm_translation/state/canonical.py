@@ -72,17 +72,6 @@ class CanonicalState:
             aux={k: v[i] for k, v in self.aux.items()},
         )
 
-    def detach_clone(self) -> CanonicalState:
-        return CanonicalState(
-            algo=self.algo,
-            positions=self.positions.detach().clone(),
-            values=self.values.detach().clone(),
-            best_x=self.best_x.detach().clone(),
-            best_y=self.best_y.detach().clone(),
-            specific={k: v.detach().clone() for k, v in self.specific.items()},
-            aux={k: v.detach().clone() for k, v in self.aux.items()},
-        )
-
 
 def _as_tensor(x, device, dtype=torch.float32) -> Tensor:
     if isinstance(x, Tensor):

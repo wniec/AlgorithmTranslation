@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import argparse
 
-from algorithm_translation.suite.bbob_splits import SCENARIOS, scenario_split
+from algorithm_translation.suite.bbob_splits import SCENARIOS, problem_dim, scenario_split
 
 
 def add_scenario_args(p: argparse.ArgumentParser, *, for_eval: bool = False) -> None:
@@ -87,11 +87,10 @@ def split_record(args, train_ids, test_ids) -> dict:
         "dims": list(args.dims),
         "train_ids": list(train_ids),
         "test_ids": list(test_ids),
+        # Training switch-point distribution, so standalone evaluators can
+        # replay held-out episodes from the same distribution.
+        "switch_cdb": float(getattr(args, "switch_cdb", 1.0)),
     }
-
-
-def _dim_of(pid: str) -> int:
-    return int(pid.rsplit("_d", 1)[1])
 
 
 def exclude_train_ids(ids, ckpt_split: dict | None) -> list[str]:
@@ -120,7 +119,7 @@ def resolve_test_ids(args, ckpt_split: dict | None) -> list[str]:
     if args.scenario is None and ckpt_split:
         ids = list(ckpt_split["test_ids"])
         if args.dims:
-            ids = [i for i in ids if _dim_of(i) in set(args.dims)]
+            ids = [i for i in ids if problem_dim(i) in set(args.dims)]
         print(f"[split] using checkpoint's {ckpt_split['scenario']} test set")
     else:
         if args.scenario is None:
