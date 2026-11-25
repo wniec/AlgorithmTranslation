@@ -45,9 +45,7 @@ class NormContext:
         # positions (B, N, D), values (B, N)
         center = positions.mean(dim=-2)  # (B, D)
         centered = positions - center.unsqueeze(-2)
-        scale = (
-            centered.pow(2).mean(dim=(-2, -1)).sqrt().clamp_min(_SCALE_FLOOR)
-        )  # (B,)
+        scale = centered.pow(2).mean(dim=(-2, -1)).sqrt().clamp_min(_SCALE_FLOOR)  # (B,)
         val_mean = values.mean(dim=-1)
         val_std = values.std(dim=-1).clamp_min(_EPS)
         return cls(center, scale, val_mean, val_std)
@@ -80,6 +78,25 @@ class NormContext:
             out = t / self._s(t.dim())
         return out.clamp(-_CLIP, _CLIP)
 
+    def _derivative_unit(self, order: int, ndim: int) -> Tensor:
+        unit = self.val_std / self.scale.pow(order)
+        return unit.reshape((-1,) + (1,) * (ndim - 1))
+
+    def normalize_field(self, t: Tensor, field) -> Tensor:
+        """``normalize`` for a schema ``Field``, in the right units for objective
+        derivatives (``DERIVATIVE_ORDER``)."""
+        order = DERIVATIVE_ORDER.get(field.name)
+        if order is not None:
+            return (t / self._derivative_unit(order, t.dim())).clamp(-_CLIP, _CLIP)
+        return self.normalize(t, field.struct, field.name in POSITION_LIKE)
+
+    def denormalize_field(self, t: Tensor, field) -> Tensor:
+        """Inverse of ``normalize_field`` (without the clip)."""
+        order = DERIVATIVE_ORDER.get(field.name)
+        if order is not None:
+            return t * self._derivative_unit(order, t.dim())
+        return self.denormalize(t, field.struct, field.name in POSITION_LIKE)
+
     def denormalize(self, t: Tensor, struct: Struct, position_like: bool) -> Tensor:
         if struct is Struct.MATRIX:
             return t * self.scale.reshape(-1, 1, 1).pow(2)
@@ -95,3 +112,7 @@ class NormContext:
 # Position-like canonical fields (centre + scale); everything else is a
 # displacement (scale only), a matrix, or a scalar.
 POSITION_LIKE = {"positions", "best_x", "pbest_x", "nbest_x", "mean", "archive"}
+# Derivatives of the objective (field -> order): a gradient is value/position,
+# a Hessian value/position^2, so they are scaled by the value spread and the
+# population's spread rather than treated as a displacement or a covariance.
+DERIVATIVE_ORDER = {"grad": 1, "hessian": 2}

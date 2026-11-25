@@ -31,13 +31,24 @@ The archive is a distinct `POINT_SET` field type: the encoder pools it
 seeded from the carried population. Any pair can be translated. (`IPSO` is in
 the portfolio but not translatable: it restarts from one particle and grows.)
 
-CMA-ES's search distribution is **computed** rather than decoded from scratch
-(`algorithm_translation/models/prior.py`): the mean is CMA-ES's own weighted recombination of the
-source's best points (a swarm's personal bests, otherwise its population), and
-the covariance has the form of its rank-μ update, blended 10% with its isotropic
-part. Its decoder head only predicts a residual around that — a mean shift, a
-covariance factor (`--cov-rank`), a step-size multiplier and a blend shift, i.e.
-`(1 + rank)·D + 2` numbers — so a zero action reproduces the computed state.
+CMA-ES's search distribution and BOBYQA's quadratic model are **computed**
+rather than decoded from scratch (`algorithm_translation/models/prior/`):
+
+- CMA-ES: the mean is CMA-ES's own weighted recombination of the source's best
+  points (a swarm's personal bests, otherwise its population), and the
+  covariance has the form of its rank-μ update, blended 10% with its isotropic
+  part.
+- BOBYQA: the quadratic model BOBYQA itself fits to the handed-over positions
+  and values (minimum-norm interpolation, centred on the best point), so it is
+  the same whichever optimizer produced them; the radius is the population's
+  mean per-coordinate std. A residual survives BOBYQA's own refit only in the
+  part of the model the points leave open.
+
+For both, the decoder head only predicts a residual around the computed state: a
+per-coordinate shift (mean / gradient), a low-rank PSD factor added to the
+matrix (`--cov-rank`) and two global log-scale shifts (step size and blend /
+curvature scale and radius), i.e. `(1 + rank)·D + 2` numbers. A zero action
+reproduces the computed state.
 
 A `TranslatorPair` holds an encoder + decoder head per algorithm. Translating
 `A -> B` reuses A's population and only decodes B's specific fields. It is trained
@@ -112,7 +123,7 @@ Shared across both trainers:
     negative when it does worse.
   - `absolute` — no baseline (0): the translated run's own score.
   - `relative` — the hand-off available without a network: the computed warm
-    start into CMA-ES (see above), the lossy default for other targets.
+    start into CMA-ES or BOBYQA (see above), the lossy default for other targets.
   - `coldtarget` — the target optimizer run cold for the whole budget.
 
   A comma-separated list sums several modes (`mixed` = `noswitch,relative`).

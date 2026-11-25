@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from algorithm_translation.models.prior import prior_native
+from algorithm_translation.models.prior import has_prior, prior_native
 from algorithm_translation.rl.reward import run_term
 from algorithm_translation.runs import make_optimizer, run_segment, shared_handoff
 
@@ -121,12 +121,16 @@ class SwitchScorer:
 
     def relative_baseline_native(self, seed: int = 0) -> dict:
         """The hand-off available without a network: the computed warm start
-        into CMA-ES (the lossy default would leave CMA-ES a random mean, i.e. a
-        restart), the shared population for every other target."""
+        for a target that has one (``models.prior``: CMA-ES, BOBYQA), the shared
+        population for every other target."""
         sw = self.switch
-        if sw.target_algo == "CMAES":
+        if has_prior(sw.target_algo):
             return prior_native(
-                sw.source_algo, sw.source_native, sw.n_target, np.random.default_rng(seed)
+                sw.source_algo,
+                sw.source_native,
+                sw.target_algo,
+                sw.n_target,
+                np.random.default_rng(seed),
             )
         return shared_handoff(sw.source_native)
 

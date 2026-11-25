@@ -21,7 +21,7 @@ import torch
 from torch import Tensor, nn
 
 from algorithm_translation.models.layers import MLP, DimAttention, ParticlePool
-from algorithm_translation.models.norm import _CLIP, POSITION_LIKE, NormContext
+from algorithm_translation.models.norm import _CLIP, NormContext
 from algorithm_translation.state.canonical import CanonicalState
 from algorithm_translation.state.schema import Struct, get_spec
 
@@ -33,24 +33,18 @@ class Latent:
 
 
 class StateEncoder(nn.Module):
-    def __init__(
-        self, algo: str, hidden: int = 64, n_layers: int = 2, n_heads: int = 4
-    ):
+    def __init__(self, algo: str, hidden: int = 64, n_layers: int = 2, n_heads: int = 4):
         super().__init__()
         self.algo = algo
         self.hidden = hidden
         spec = get_spec(algo)
 
-        self.ppd_fields = [
-            f for f in spec.specific if f.struct is Struct.PER_PARTICLE_PER_DIM
-        ]
+        self.ppd_fields = [f for f in spec.specific if f.struct is Struct.PER_PARTICLE_PER_DIM]
         self.pd_fields = [f for f in spec.specific if f.struct is Struct.PER_DIM]
-        # Name of the algorithm's MATRIX field, if any (CMA-ES: "sigma_cov";
-        # BOBYQA: "hessian"). Folded into the attention's covariance bias below.
-        self.cov_name = next(
-            (f.name for f in spec.specific if f.struct is Struct.MATRIX), None
-        )
-        self.has_cov = self.cov_name is not None
+        # The algorithm's MATRIX field, if any (CMA-ES: "sigma_cov"; BOBYQA:
+        # "hessian"). Folded into the attention's covariance bias below.
+        self.cov_field = next((f for f in spec.specific if f.struct is Struct.MATRIX), None)
+        self.has_cov = self.cov_field is not None
         self.scalar_fields = [f for f in spec.specific if f.struct is Struct.SCALAR]
         self.set_fields = [f for f in spec.specific if f.struct is Struct.POINT_SET]
 
@@ -69,14 +63,10 @@ class StateEncoder(nn.Module):
 
         self.pool = ParticlePool()
         self.pool_proj = nn.Linear(2 * hidden, hidden)
-        self.attn = nn.ModuleList(
-            [DimAttention(hidden, n_heads) for _ in range(n_layers)]
-        )
+        self.attn = nn.ModuleList([DimAttention(hidden, n_heads) for _ in range(n_layers)])
 
         # global scalars: best_y(std), log N, log D, + one per scalar field
-        self.global_mlp = MLP(
-            [hidden + 3 + len(self.scalar_fields), hidden, hidden], last_act=True
-        )
+        self.global_mlp = MLP([hidden + 3 + len(self.scalar_fields), hidden, hidden], last_act=True)
 
     def forward(self, state: CanonicalState, ctx: NormContext) -> Latent:
         pos = state.positions  # (B, N, D)
@@ -85,7 +75,7 @@ class StateEncoder(nn.Module):
         pos_n = ctx.normalize(pos, Struct.PER_PARTICLE_PER_DIM, position_like=True)
         ppd = [pos_n.unsqueeze(-1)]
         for f in self.ppd_fields:
-            t = ctx.normalize(state.specific[f.name], f.struct, f.name in POSITION_LIKE)
+            t = ctx.normalize_field(state.specific[f.name], f)
             ppd.append(t.unsqueeze(-1))
         ppd = torch.cat(ppd, dim=-1)  # (B, N, D, c_ppd)
 
@@ -95,7 +85,7 @@ class StateEncoder(nn.Module):
         best_n = ctx.normalize(state.best_x, Struct.PER_DIM, True)  # (B, D)
         pd_list = [best_n.unsqueeze(-1)]
         for f in self.pd_fields:
-            t = ctx.normalize(state.specific[f.name], f.struct, f.name in POSITION_LIKE)
+            t = ctx.normalize_field(state.specific[f.name], f)
             pd_list.append(t.unsqueeze(-1))
         pd = torch.cat(pd_list, dim=-1)  # (B, D, c_pd)
         pd = pd.unsqueeze(1).expand(B, N, D, pd.shape[-1])  # broadcast over N
@@ -127,7 +117,7 @@ class StateEncoder(nn.Module):
         xc = pos_n - pos_n.mean(dim=1, keepdim=True)
         cov_emp = xc.transpose(1, 2) @ xc / max(pos_n.shape[1], 1)
         if self.has_cov:
-            cov_n = ctx.normalize(state.specific[self.cov_name], Struct.MATRIX, False)
+            cov_n = ctx.normalize_field(state.specific[self.cov_field.name], self.cov_field)
             cov_emp = cov_emp + cov_n
         for f in self.set_fields:  # add the archive's empirical covariance
             pts_n = ctx.normalize(state.specific[f.name], Struct.POINT_SET, True)
@@ -150,8 +140,6 @@ class StateEncoder(nn.Module):
         log_d = torch.full((B, 1), float(D), device=device).log1p()
         feats = [best_y_std, log_n, log_d]
         for f in self.scalar_fields:
-            s = ctx.normalize(state.specific[f.name], Struct.SCALAR, False).reshape(
-                B, 1
-            )
+            s = ctx.normalize(state.specific[f.name], Struct.SCALAR, False).reshape(B, 1)
             feats.append(s)
         return torch.cat(feats, dim=-1)

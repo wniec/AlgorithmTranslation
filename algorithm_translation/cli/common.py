@@ -107,7 +107,7 @@ def add_env_args(p: argparse.ArgumentParser) -> None:
         "'absolute' baseline = 0 (the translated run's own score); "
         "'relative' baseline = the "
         "hand-off available without a network (translation quality): the "
-        "computed warm start into CMA-ES, the lossy default otherwise; "
+        "computed warm start into CMA-ES or BOBYQA, the lossy default otherwise; "
         "'coldtarget' baseline = "
         "the target (second) optimizer run cold from the start (beat running "
         "the second algorithm alone). Pass a comma-separated list "

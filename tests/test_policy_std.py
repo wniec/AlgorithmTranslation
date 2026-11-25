@@ -44,8 +44,8 @@ def _ctx(s):
 
 
 def test_std_shape_and_finite_all_targets():
-    """Runs for every segment kind: ppd (PSO), cov+scalar (BOBYQA), cov no-scalar
-    (CMAES), set (MADDE)."""
+    """Runs for every segment kind: ppd (PSO), prior residuals pd+cov_L+scalar
+    (BOBYQA, CMAES), set (MADDE)."""
     for a, b in (("PSO", "BOBYQA"), ("CMAES", "BOBYQA"), ("PSO", "CMAES"), ("PSO", "MADDE")):
         ac = ActorCritic(a, b, hidden=32, n_layers=1).eval()
         for target in (a, b):
@@ -110,11 +110,10 @@ def test_std_is_coordinate_permutation_equivariant():
     D = s.d
     # grad segment: one std per dimension -> should permute with the coords.
     assert torch.allclose(std[0, :D][perm], std_perm[0, :D], atol=1e-4)
-    # cov_d segment (the covariance diagonal) is also one-per-dimension.
+    # cov_L segment (the Hessian factor, D x rank): its rows permute too.
     dec = ac.translator.decoders["BOBYQA"]
     sizes = dec.segment_sizes(D, s.n)
-    names = dec.segment_names()
-    off = sum(sizes[: names.index("cov_d")])
-    cov_d = std[0, off : off + D]
-    cov_d_perm = std_perm[0, off : off + D]
-    assert torch.allclose(cov_d[perm], cov_d_perm, atol=1e-4)
+    off = sum(sizes[: dec.segment_names().index("cov_L")])
+    rows = std[0, off : off + D * dec.cov_rank].reshape(D, dec.cov_rank)
+    rows_perm = std_perm[0, off : off + D * dec.cov_rank].reshape(D, dec.cov_rank)
+    assert torch.allclose(rows[perm], rows_perm, atol=1e-4)

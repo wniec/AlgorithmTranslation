@@ -151,20 +151,22 @@ def _rand_state(algo, B=2, N=10, D=4):
     return CanonicalState(algo, pos, vals, bx, by, spec)
 
 
-def test_translate_to_bobyqa_produces_psd_model():
+def test_untrained_translation_to_bobyqa_starts_at_its_own_fit():
+    """The decoder predicts a small residual around BOBYQA's own model fit."""
+    from algorithm_translation.models.prior import bobyqa_specific
+
     pair = TranslatorPair("PSO", "BOBYQA").eval()
     s = _rand_state("PSO", N=10, D=4)
     ctx = NormContext.from_shared(s.positions, s.values)
     with torch.no_grad():
-        out = pair.translate(s, "BOBYQA", ctx)
-    assert sorted(out.specific) == ["grad", "hessian", "radius"]
-    assert out.specific["hessian"].shape == (2, 4, 4)
-    assert out.specific["radius"].shape == (2,)
-    # The Hessian decodes through the PSD covariance head (convex local model).
-    assert (torch.linalg.eigvalsh(out.specific["hessian"]) > -1e-6).all()
-    # Radius is decoded in log-space -> strictly positive.
-    assert (out.specific["radius"] > 0).all()
-    assert torch.isfinite(out.specific["hessian"]).all()
+        out = pair.translate(s, "BOBYQA", ctx).specific
+    prior = bobyqa_specific(s, ctx)
+    assert sorted(out) == ["grad", "hessian", "radius"]
+    assert out["hessian"].shape == (2, 4, 4) and out["radius"].shape == (2,)
+    assert torch.allclose(out["hessian"], out["hessian"].transpose(-2, -1))
+    assert (out["radius"] > 0).all()
+    ratio = out["radius"] / prior["radius"]
+    assert ((ratio > 0.8) & (ratio < 1.25)).all()
 
 
 def test_bobyqa_translates_both_directions():

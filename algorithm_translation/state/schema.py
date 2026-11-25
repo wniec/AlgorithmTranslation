@@ -129,8 +129,8 @@ MADDE_SPEC = StateSpec(
 # model rather than a sampling shape), plus the trust-region radius ``radius``
 # (its step-scale analogue of CMA-ES's sigma). The interpolation set itself is
 # the shared population (positions/values), so it is carried, not translated.
-# ``hessian`` decodes through the PSD covariance head — a convex local model,
-# which is the correct inductive bias for a *local* optimizer near a minimum.
+# Into BOBYQA, the model is fitted to the handed-over points and the decoder
+# predicts a residual around it (``algorithm_translation/models/prior/bobyqa.py``).
 BOBYQA_SPEC = StateSpec(
     algo="BOBYQA",
     specific=(

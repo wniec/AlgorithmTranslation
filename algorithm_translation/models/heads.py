@@ -13,11 +13,13 @@ Consumes the shared latent ``z`` and the shared population being handed over
   vector, decoded in log-space
   (always positive after denormalization).
 
-CMA-ES is the exception: its distribution is computed from the source's points
-(``algorithm_translation/models/prior.py``) and the head only predicts a residual around it — a
-mean shift (D), a covariance factor (D x rank), and a step-size multiplier plus
-isotropic-blend shift (2). The action is therefore ``(1 + rank) * D + 2`` numbers
-and a zero action reproduces the computed state exactly.
+Targets with a computed prior (``algorithm_translation/models/prior``: CMA-ES's
+search distribution, BOBYQA's quadratic model) are the exception: the state is
+computed from the handed-over points and the head only predicts a residual
+around it — a per-coordinate shift (D), a low-rank matrix factor (D x rank) and
+a few global log-scale shifts. The action is therefore
+``(1 + rank) * D + n_scalar`` numbers and a zero action reproduces the computed
+state exactly.
 
 The head also exposes an **action interface** for the RL trainer:
 ``action_mean`` returns the flat normalized coordinates an RL policy puts a
@@ -34,16 +36,10 @@ from torch import Tensor, nn
 from algorithm_translation.models.encoder import Latent
 from algorithm_translation.models.layers import MLP, CovFactorHead
 from algorithm_translation.models.norm import POSITION_LIKE, NormContext
-from algorithm_translation.models.prior import cmaes_specific
+from algorithm_translation.models.prior import PRIORS
 from algorithm_translation.optimizers.DE import ARATE
 from algorithm_translation.state.canonical import CanonicalState
 from algorithm_translation.state.schema import Struct, get_spec
-
-# Size of a unit CMA-ES residual coordinate. Exploration noise lands directly on
-# these, so they keep a std-1 action within a plausible range of the prior.
-_MEAN_STEP = 0.5
-_FACTOR_STEP = 0.3
-_LOG_SIGMA_STEP = 0.5
 
 
 class StateDecoder(nn.Module):
@@ -55,20 +51,16 @@ class StateDecoder(nn.Module):
         spec = get_spec(algo)
         self.spec = spec
 
-        self.ppd_fields = [
-            f for f in spec.specific if f.struct is Struct.PER_PARTICLE_PER_DIM
-        ]
+        self.ppd_fields = [f for f in spec.specific if f.struct is Struct.PER_PARTICLE_PER_DIM]
         self.pd_fields = [f for f in spec.specific if f.struct is Struct.PER_DIM]
         self.scalar_fields = [f for f in spec.specific if f.struct is Struct.SCALAR]
         self.set_fields = [f for f in spec.specific if f.struct is Struct.POINT_SET]
-        self.cov_field = next(
-            (f for f in spec.specific if f.struct is Struct.MATRIX), None
-        )
+        self.cov_field = next((f for f in spec.specific if f.struct is Struct.MATRIX), None)
 
-        self.uses_prior = algo == "CMAES"
-        if self.uses_prior:
-            self.pd_head = nn.Linear(hidden, 1)  # mean shift
-            self.scalar_head = nn.Linear(hidden, 2)  # log-sigma, blend logit
+        self.prior = PRIORS.get(algo)
+        if self.prior is not None:
+            self.pd_head = nn.Linear(hidden, 1)  # per-coordinate shift
+            self.scalar_head = nn.Linear(hidden, self.prior.n_scalar)
             if cov_rank > 0:
                 self.factor_head = nn.Linear(hidden, cov_rank)
             self._small_init()
@@ -111,11 +103,11 @@ class StateDecoder(nn.Module):
     def _layout(self, D: int, N: int) -> list[tuple[str, tuple[int, ...]]]:
         """Ordered (segment-name, per-sample shape) of the flat action vector."""
         segs: list[tuple[str, tuple[int, ...]]] = []
-        if self.uses_prior:
+        if self.prior is not None:
             segs.append(("pd", (D, 1)))
             if self.cov_rank > 0:
                 segs.append(("cov_L", (D, self.cov_rank)))
-            segs.append(("scalar", (2,)))
+            segs.append(("scalar", (self.prior.n_scalar,)))
             return segs
         if self.pd_fields:
             segs.append(("pd", (D, len(self.pd_fields))))
@@ -164,11 +156,11 @@ class StateDecoder(nn.Module):
         B, D, _ = tokens.shape
         parts: list[Tensor] = []
 
-        if self.uses_prior:
+        if self.prior is not None:
             parts.append(self.pd_head(tokens).reshape(B, -1))  # (B, D)
             if self.cov_rank > 0:
                 parts.append(self.factor_head(tokens).reshape(B, -1))  # (B, D*rank)
-            parts.append(self.scalar_head(z.global_vec))  # (B, 2)
+            parts.append(self.scalar_head(z.global_vec))  # (B, n_scalar)
             return torch.cat(parts, dim=-1)
 
         if self.pd_fields:
@@ -216,16 +208,12 @@ class StateDecoder(nn.Module):
         B = coords.shape[0]
         D = ctx.center.shape[-1]
         n = shared.n
-        if self.uses_prior:
+        if self.prior is not None:
             factor_end = D + D * self.cov_rank
-            return cmaes_specific(
-                shared,
-                ctx,
-                mean_shift=_MEAN_STEP * coords[:, :D],
-                factor=_FACTOR_STEP * coords[:, D:factor_end].reshape(B, D, self.cov_rank),
-                log_sigma=_LOG_SIGMA_STEP * coords[:, factor_end],
-                blend_logit=coords[:, factor_end + 1],
+            factor = (
+                coords[:, D:factor_end].reshape(B, D, self.cov_rank) if self.cov_rank > 0 else None
             )
+            return self.prior.build(shared, ctx, coords[:, :D], factor, coords[:, factor_end:])
         out: dict[str, Tensor] = {}
         cov_L: Tensor | None = None
         off = 0
@@ -239,19 +227,15 @@ class StateDecoder(nn.Module):
 
             if name == "pd":
                 for i, f in enumerate(self.pd_fields):
-                    out[f.name] = ctx.denormalize(
-                        chunk[..., i], f.struct, f.name in POSITION_LIKE
-                    )
+                    out[f.name] = ctx.denormalize_field(chunk[..., i], f)
             elif name == "ppd":
                 for i, f in enumerate(self.ppd_fields):
-                    out[f.name] = ctx.denormalize(
-                        chunk[..., i], f.struct, f.name in POSITION_LIKE
-                    )
+                    out[f.name] = ctx.denormalize_field(chunk[..., i], f)
             elif name == "cov_L":
                 cov_L = chunk  # assembled together with the diagonal below
             elif name == "cov_d":
                 cov_n = self.cov_head.assemble(cov_L, chunk)
-                out[self.cov_field.name] = ctx.denormalize(cov_n, Struct.MATRIX, False)
+                out[self.cov_field.name] = ctx.denormalize_field(cov_n, self.cov_field)
             elif name == "set":
                 for i, f in enumerate(self.set_fields):
                     out[f.name] = ctx.denormalize(
@@ -265,8 +249,6 @@ class StateDecoder(nn.Module):
 
     # ------------------------------------------------------------------ #
 
-    def forward(
-        self, z: Latent, shared: CanonicalState, ctx: NormContext
-    ) -> dict[str, Tensor]:
+    def forward(self, z: Latent, shared: CanonicalState, ctx: NormContext) -> dict[str, Tensor]:
         coords = self.action_mean(z, shared.positions, ctx)
         return self.build_state(coords, ctx, shared)

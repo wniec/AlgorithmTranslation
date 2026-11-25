@@ -1,4 +1,4 @@
-"""Computed CMA-ES warm start: the state a switch can derive without a network.
+"""Computed CMA-ES warm start: a search distribution from the handed-over points.
 
 A CMA-ES search distribution can be estimated directly from the points the
 source optimizer already evaluated: the mean is CMA-ES's own weighted
@@ -17,18 +17,11 @@ from __future__ import annotations
 
 import math
 
-import numpy as np
 import torch
 from torch import Tensor
 
 from algorithm_translation.models.norm import NormContext
-from algorithm_translation.state.canonical import (
-    CanonicalState,
-    collate,
-    from_canonical,
-    resample_population,
-    to_canonical,
-)
+from algorithm_translation.state.canonical import CanonicalState
 
 # Share of the covariance replaced by its isotropic part: a small set of parents
 # gives a rank-deficient estimate, which CMA-ES could never search out of.
@@ -36,6 +29,11 @@ PRIOR_BLEND = 0.1
 # Smallest search std, relative to the population's spread (for coincident points).
 _MIN_STD = 1e-4
 _MAX_LOG_SIGMA = 6.0
+# Size of a unit action coordinate. Exploration noise lands directly on these,
+# so they keep a std-1 action within a plausible range of the prior.
+_MEAN_STEP = 0.5
+_FACTOR_STEP = 0.3
+_LOG_SIGMA_STEP = 0.5
 
 
 def _n_parents(n: int, d: int) -> int:
@@ -115,24 +113,21 @@ def cmaes_specific(
     }
 
 
-def prior_native(
-    source_algo: str,
-    native: dict,
-    n_target: int | None = None,
-    rng: np.random.Generator | None = None,
-) -> dict:
-    """Native CMA-ES warm-start dict computed from a source optimizer's native
-    state, resized to the target's population like a translated action."""
-    batch = collate([to_canonical(source_algo, native)])
-    ctx = NormContext.from_shared(batch.positions, batch.values)
-    state = CanonicalState(
-        "CMAES",
-        batch.positions,
-        batch.values,
-        batch.best_x,
-        batch.best_y,
-        cmaes_specific(batch, ctx),
-    ).index(0)
-    if n_target is not None and n_target != state.n:
-        state = resample_population(state, n_target, rng or np.random.default_rng(0))
-    return from_canonical(state)
+def cmaes_from_action(
+    state: CanonicalState,
+    ctx: NormContext,
+    shift: Tensor | None,
+    factor: Tensor | None,
+    scalars: Tensor | None,
+) -> dict[str, Tensor]:
+    """``cmaes_specific`` from the decoder's action blocks: ``shift`` (B, D) moves
+    the mean, ``factor`` (B, D, R) widens the covariance, ``scalars`` (B, 2) are
+    the log step-size and blend-logit shifts. ``None`` blocks leave the prior."""
+    return cmaes_specific(
+        state,
+        ctx,
+        mean_shift=None if shift is None else _MEAN_STEP * shift,
+        factor=None if factor is None else _FACTOR_STEP * factor,
+        log_sigma=None if scalars is None else _LOG_SIGMA_STEP * scalars[:, 0],
+        blend_logit=None if scalars is None else scalars[:, 1],
+    )
