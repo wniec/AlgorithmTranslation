@@ -88,6 +88,8 @@ class NormContext:
         order = DERIVATIVE_ORDER.get(field.name)
         if order is not None:
             return (t / self._derivative_unit(order, t.dim())).clamp(-_CLIP, _CLIP)
+        if field.name in DIMENSIONLESS:
+            return torch.log(t.clamp_min(_EPS)).clamp(-_CLIP, _CLIP)
         return self.normalize(t, field.struct, field.name in POSITION_LIKE)
 
     def denormalize_field(self, t: Tensor, field) -> Tensor:
@@ -95,6 +97,8 @@ class NormContext:
         order = DERIVATIVE_ORDER.get(field.name)
         if order is not None:
             return t * self._derivative_unit(order, t.dim())
+        if field.name in DIMENSIONLESS:
+            return torch.exp(t)
         return self.denormalize(t, field.struct, field.name in POSITION_LIKE)
 
     def denormalize(self, t: Tensor, struct: Struct, position_like: bool) -> Tensor:
@@ -116,3 +120,6 @@ POSITION_LIKE = {"positions", "best_x", "pbest_x", "nbest_x", "mean", "archive"}
 # a Hessian value/position^2, so they are scaled by the value spread and the
 # population's spread rather than treated as a displacement or a covariance.
 DERIVATIVE_ORDER = {"grad": 1, "hessian": 2}
+# Positive scalars without a unit (AMaLGaM's distribution multiplier): encoded
+# as a plain log, not relative to the population's spread like a step size.
+DIMENSIONLESS = {"c_mult"}

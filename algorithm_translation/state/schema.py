@@ -141,6 +141,32 @@ BOBYQA_SPEC = StateSpec(
 )
 
 
+# The EDAs translate their search distribution. UMDA (smoothed UMDA_c) keeps a
+# diagonal Gaussian, ``mean`` and per-coordinate ``std``. AMaLGaM keeps a full
+# Gaussian whose ``cov`` has memory across generations, the anticipated mean
+# shift ``ams_shift`` (its momentum, like CMA-ES's p_c or PSO's velocities) and
+# the dimensionless distribution multiplier ``c_mult``. Into either, the
+# distribution is estimated from the handed-over points and the decoder predicts
+# a residual around it (``algorithm_translation/models/prior/eda.py``).
+UMDA_SPEC = StateSpec(
+    algo="UMDA",
+    specific=(
+        Field("mean", Struct.PER_DIM, "mean"),
+        Field("std", Struct.PER_DIM, "std", Constraint.POSITIVE),
+    ),
+)
+
+AMALGAM_SPEC = StateSpec(
+    algo="AMALGAM",
+    specific=(
+        Field("mean", Struct.PER_DIM, "mean"),
+        Field("cov", Struct.MATRIX, "cov"),
+        Field("ams_shift", Struct.PER_DIM, "ams_shift"),
+        Field("c_mult", Struct.SCALAR, "c_mult", Constraint.POSITIVE),
+    ),
+)
+
+
 _SPECS: dict[str, StateSpec] = {
     "PSO": PSO_SPEC,
     "SPSO": PSO_SPEC,
@@ -149,6 +175,8 @@ _SPECS: dict[str, StateSpec] = {
     "CMAES": CMAES_SPEC,
     "MADDE": MADDE_SPEC,
     "BOBYQA": BOBYQA_SPEC,
+    "UMDA": UMDA_SPEC,
+    "AMALGAM": AMALGAM_SPEC,
 }
 
 

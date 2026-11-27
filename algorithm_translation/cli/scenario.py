@@ -52,15 +52,16 @@ def add_scenario_args(p: argparse.ArgumentParser, *, for_eval: bool = False) -> 
         type=int,
         nargs="+",
         default=None,
-        help="training instances (default 1 2 3)",
+        help="training instances (lopo default: all 15, the split ignores instances; "
+        "loio default: 1-5 71-75)",
     )
     p.add_argument(
         "--test-instances",
         type=int,
         nargs="+",
         default=None,
-        help="held-out instances (lopo default: = --instances; loio default: "
-        "every BBOB instance not in --instances)",
+        help="held-out instances (lopo default: = --instances, i.e. all 15; "
+        "loio default: every BBOB instance not in --instances, i.e. 76-80)",
     )
     p.add_argument(
         "--split-seed", type=int, default=0, help="seed for --split random"

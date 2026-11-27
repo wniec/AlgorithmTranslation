@@ -10,7 +10,9 @@ import torch
 from algorithm_translation.cli.scenario import add_scenario_args, resolve_test_ids
 from algorithm_translation.suite.bbob_splits import (
     ALL_FUNCTIONS,
+    DEFAULT_TRAIN_INSTANCES,
     EASY_TRAIN_FUNCTIONS,
+    INSTANCE_IDS,
     scenario_split,
 )
 
@@ -41,6 +43,20 @@ def test_loio_holds_out_instances():
     assert {_parts(p)[0] for p in train} == {_parts(p)[0] for p in test} == ALL_FUNCTIONS
     assert {_parts(p)[1] for p in train} == {1, 2}
     assert {_parts(p)[1] for p in test} == {3}
+
+
+def test_lopo_default_uses_every_instance_on_both_sides():
+    train, test = scenario_split("lopo", [2], split="easy")
+    assert {_parts(p)[1] for p in train} == set(INSTANCE_IDS)
+    assert {_parts(p)[1] for p in test} == set(INSTANCE_IDS)
+
+
+def test_loio_default_instances():
+    train, test = scenario_split("loio", [2])
+    train_i = {_parts(p)[1] for p in train}
+    test_i = {_parts(p)[1] for p in test}
+    assert train_i == set(DEFAULT_TRAIN_INSTANCES) and len(train_i) == 10
+    assert test_i == set(INSTANCE_IDS) - train_i == {76, 77, 78, 79, 80}
 
 
 def test_loio_overlapping_instances_rejected():

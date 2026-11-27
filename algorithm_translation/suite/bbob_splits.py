@@ -61,7 +61,8 @@ def get_train_test_split(mode: str, dims: list[int]) -> tuple[list[str], list[st
 # --------------------------------------------------------------------------- #
 
 SCENARIOS = ("lopo", "loio")
-DEFAULT_TRAIN_INSTANCES = [1, 2, 3]
+# loio default: ~2/3 of the instances for training, the rest held out.
+DEFAULT_TRAIN_INSTANCES = [1, 2, 3, 4, 5, 71, 72, 73, 74, 75]
 
 
 def split_functions(split: str, seed: int = 0) -> tuple[set[int], set[int]]:
@@ -96,21 +97,25 @@ def scenario_split(
 
     * ``lopo`` (leave-some-problems-out): the BBOB *functions* are partitioned by
       ``split`` (easy/hard/random); test problems are functions never seen in
-      training. ``test_instances`` defaults to ``train_instances``.
+      training. Instances play no role in the split: both sides use every
+      BBOB instance unless ``train_instances`` / ``test_instances`` restrict
+      them (``test_instances`` defaults to ``train_instances``).
     * ``loio`` (leave-some-instances-out): train and test use the same
-      ``functions`` (default: all 24) but disjoint *instances*.
-      ``test_instances`` defaults to every BBOB instance not trained on.
+      ``functions`` (default: all 24) but disjoint *instances*: by default
+      training on ``DEFAULT_TRAIN_INSTANCES`` (10 of 15) and testing on every
+      BBOB instance not trained on.
 
     Raises if the two sets would share a problem ID.
     """
-    train_inst = list(train_instances or DEFAULT_TRAIN_INSTANCES)
     if scenario == "lopo":
+        train_inst = list(train_instances or INSTANCE_IDS)
         train_f, test_f = split_functions(split, seed)
         if functions is not None:  # optional restriction of the pool
             train_f &= set(functions)
             test_f &= set(functions)
         test_inst = list(test_instances or train_inst)
     elif scenario == "loio":
+        train_inst = list(train_instances or DEFAULT_TRAIN_INSTANCES)
         train_f = test_f = set(functions) if functions else set(ALL_FUNCTIONS)
         test_inst = list(
             test_instances or [i for i in INSTANCE_IDS if i not in train_inst]

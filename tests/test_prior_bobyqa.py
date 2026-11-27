@@ -111,7 +111,13 @@ def test_zero_action_reproduces_prior_and_residuals_act():
 
     wider = bobyqa_specific(s, ctx, factor=torch.ones(2, D, 1, dtype=X.dtype))
     added = torch.linalg.eigvalsh(wider["hessian"] - prior["hessian"])
-    assert (added > -1e-9).all()  # a PSD term is added
+    assert (added > -1e-9).all()  # the first factor column adds curvature
+    assert added.max() > 1e-6
+    f = torch.zeros(2, D, 2, dtype=X.dtype)
+    f[..., 1] = 1.0  # the second column removes it, so the Hessian can turn indefinite
+    flatter = bobyqa_specific(s, ctx, factor=f)
+    removed = torch.linalg.eigvalsh(flatter["hessian"] - prior["hessian"])
+    assert (removed < 1e-9).all() and removed.min() < -1e-6
     doubled = bobyqa_specific(s, ctx, log_radius=torch.full((2,), math.log(2.0)))
     assert torch.allclose(doubled["radius"], 2 * prior["radius"])
     scaled = bobyqa_specific(s, ctx, log_curvature=torch.full((2,), math.log(3.0)))

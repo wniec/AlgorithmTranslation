@@ -59,9 +59,9 @@ class StateDecoder(nn.Module):
 
         self.prior = PRIORS.get(algo)
         if self.prior is not None:
-            self.pd_head = nn.Linear(hidden, 1)  # per-coordinate shift
+            self.pd_head = nn.Linear(hidden, self.prior.n_shift)  # per-coordinate shifts
             self.scalar_head = nn.Linear(hidden, self.prior.n_scalar)
-            if cov_rank > 0:
+            if self._uses_factor:
                 self.factor_head = nn.Linear(hidden, cov_rank)
             self._small_init()
             return
@@ -80,6 +80,11 @@ class StateDecoder(nn.Module):
             self.cov_head = CovFactorHead(hidden, rank=cov_rank)
 
         self._small_init()
+
+    @property
+    def _uses_factor(self) -> bool:
+        """Whether the prior's action carries a covariance factor block."""
+        return self.prior is not None and self.prior.uses_factor and self.cov_rank > 0
 
     @staticmethod
     def _m_cap(n: int) -> int:
@@ -104,8 +109,8 @@ class StateDecoder(nn.Module):
         """Ordered (segment-name, per-sample shape) of the flat action vector."""
         segs: list[tuple[str, tuple[int, ...]]] = []
         if self.prior is not None:
-            segs.append(("pd", (D, 1)))
-            if self.cov_rank > 0:
+            segs.append(("pd", (D, self.prior.n_shift)))
+            if self._uses_factor:
                 segs.append(("cov_L", (D, self.cov_rank)))
             segs.append(("scalar", (self.prior.n_scalar,)))
             return segs
@@ -157,8 +162,8 @@ class StateDecoder(nn.Module):
         parts: list[Tensor] = []
 
         if self.prior is not None:
-            parts.append(self.pd_head(tokens).reshape(B, -1))  # (B, D)
-            if self.cov_rank > 0:
+            parts.append(self.pd_head(tokens).reshape(B, -1))  # (B, D*n_shift)
+            if self._uses_factor:
                 parts.append(self.factor_head(tokens).reshape(B, -1))  # (B, D*rank)
             parts.append(self.scalar_head(z.global_vec))  # (B, n_scalar)
             return torch.cat(parts, dim=-1)
@@ -209,11 +214,16 @@ class StateDecoder(nn.Module):
         D = ctx.center.shape[-1]
         n = shared.n
         if self.prior is not None:
-            factor_end = D + D * self.cov_rank
+            k = self.prior.n_shift
+            shift = coords[:, : D * k]
+            shift = shift if k == 1 else shift.reshape(B, D, k)
+            factor_end = D * k + (D * self.cov_rank if self._uses_factor else 0)
             factor = (
-                coords[:, D:factor_end].reshape(B, D, self.cov_rank) if self.cov_rank > 0 else None
+                coords[:, D * k : factor_end].reshape(B, D, self.cov_rank)
+                if self._uses_factor
+                else None
             )
-            return self.prior.build(shared, ctx, coords[:, :D], factor, coords[:, factor_end:])
+            return self.prior.build(shared, ctx, shift, factor, coords[:, factor_end:])
         out: dict[str, Tensor] = {}
         cov_L: Tensor | None = None
         off = 0

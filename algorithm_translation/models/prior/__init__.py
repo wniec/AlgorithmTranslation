@@ -9,9 +9,13 @@ point of training and the ``relative`` reward's baseline.
 Every prior has the same action layout, so the decoder handles all of them the
 same way:
 
-* ``shift`` (D,): a per-coordinate shift (CMA-ES mean / BOBYQA gradient);
-* ``factor`` (D, R): a low-rank PSD term ``F F^T`` added to the matrix (CMA-ES
-  covariance / BOBYQA Hessian), omitted when the rank is 0;
+* ``shift`` (D, ``n_shift``): per-coordinate shifts (CMA-ES mean / BOBYQA
+  gradient; the EDAs use two columns, see ``prior/eda.py``), passed to
+  ``build`` as (B, D) when there is one column and (B, D, n_shift) otherwise;
+* ``factor`` (D, R): a low-rank term added to the matrix: PSD ``F F^T`` for a
+  covariance (CMA-ES, AMaLGaM), signed ``F diag(+1, -1, ...) F^T`` for BOBYQA's
+  Hessian, which may be indefinite; omitted when the rank is 0 or the prior has no
+  matrix (``uses_factor=False``);
 * ``scalars`` (``n_scalar``,): global log-scale shifts.
 """
 
@@ -31,6 +35,7 @@ from algorithm_translation.models.prior.cmaes import (
     cmaes_specific,
     prior_distribution,
 )
+from algorithm_translation.models.prior.eda import amalgam_from_action, umda_from_action
 from algorithm_translation.state.canonical import (
     CanonicalState,
     collate,
@@ -63,11 +68,15 @@ Build = Callable[
 class Prior:
     n_scalar: int
     build: Build
+    n_shift: int = 1
+    uses_factor: bool = True
 
 
 PRIORS: dict[str, Prior] = {
     "CMAES": Prior(n_scalar=2, build=cmaes_from_action),
     "BOBYQA": Prior(n_scalar=2, build=bobyqa_from_action),
+    "UMDA": Prior(n_scalar=1, build=umda_from_action, n_shift=2, uses_factor=False),
+    "AMALGAM": Prior(n_scalar=2, build=amalgam_from_action, n_shift=2),
 }
 
 

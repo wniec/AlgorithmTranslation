@@ -6,12 +6,12 @@
 #SBATCH --account=<ADD>                # grant / project account to charge
 #SBATCH --nodes=1
 #SBATCH --ntasks=1                     # one training process; parallelism is via --n-workers, not MPI
-#SBATCH --cpus-per-task=16              # 14 rollout workers + main + headroom; keep >= (--n-workers + 1)
-#SBATCH --mem=16G
+#SBATCH --cpus-per-task=32              # 30 rollout workers + main + headroom; keep >= (--n-workers + 1)
+#SBATCH --mem-per-cpu=16G
 #SBATCH --time=48:00:00                # 1000 updates; adjust to your measured s/upd (watch the tqdm bar)
 #SBATCH --output=logs/%x-%j.out
 #SBATCH --error=logs/%x-%j.err
-#SBATCH --mail-type=END,FAIL           # optional: drop these two lines if your cluster has no mail
+#SBATCH --mail-type=BEGIN,END,FAIL           # optional: drop these two lines if your cluster has no mail
 #SBATCH --mail-user=<ADD>
 
 set -euo pipefail

@@ -96,6 +96,20 @@ def fit_model(state: CanonicalState, ctx: NormContext) -> dict[str, Tensor]:
     return {k: v.to(dtype) for k, v in out.items()}
 
 
+def curvature_signs(rank: int, dtype=None, device=None) -> Tensor:
+    """Fixed signs of the factor columns, alternating ``+1, -1, +1, ...``.
+
+    A Hessian, unlike a covariance, need not be positive semidefinite (saddles,
+    concave directions), so the residual ``F diag(s) F^T`` adds curvature along
+    the even columns and removes it along the odd ones. Any symmetric matrix of
+    rank <= R with at most ``ceil(R/2)`` positive and ``floor(R/2)`` negative
+    eigenvalues is reachable, at no extra action coordinates. Rank 1 can only add.
+    """
+    s = torch.ones(rank, dtype=dtype, device=device)
+    s[1::2] = -1.0
+    return s
+
+
 def bobyqa_specific(
     state: CanonicalState,
     ctx: NormContext,
@@ -107,7 +121,8 @@ def bobyqa_specific(
     """BOBYQA's specific fields from the computed prior, plus optional residuals:
 
     * ``grad_shift`` (B, D): added to the gradient, in units of ``g_ref``;
-    * ``factor`` (B, D, R): adds ``h_ref * factor factor^T`` to the Hessian;
+    * ``factor`` (B, D, R): adds the signed ``h_ref * F diag(s) F^T`` to the
+      Hessian, ``s = curvature_signs(R)``;
     * ``log_curvature`` (B,): multiplies the Hessian by ``exp(log_curvature)``;
     * ``log_radius`` (B,): multiplies the radius by ``exp(log_radius)``.
 
@@ -119,7 +134,9 @@ def bobyqa_specific(
     if grad_shift is not None:
         grad = grad + m["g_ref"].unsqueeze(-1) * grad_shift
     if factor is not None:
-        hessian = hessian + m["h_ref"].reshape(B, 1, 1) * factor @ factor.transpose(-2, -1)
+        s = curvature_signs(factor.shape[-1], factor.dtype, factor.device)
+        signed = (factor * s) @ factor.transpose(-2, -1)
+        hessian = hessian + m["h_ref"].reshape(B, 1, 1) * signed
     if log_curvature is not None:
         scale = log_curvature.clamp(-_MAX_LOG_SCALE, _MAX_LOG_SCALE).exp()
         hessian = hessian * scale.reshape(B, 1, 1)
@@ -136,7 +153,8 @@ def bobyqa_from_action(
     scalars: Tensor | None,
 ) -> dict[str, Tensor]:
     """``bobyqa_specific`` from the decoder's action blocks: ``shift`` (B, D)
-    moves the gradient, ``factor`` (B, D, R) adds curvature, ``scalars`` (B, 2)
+    moves the gradient, ``factor`` (B, D, R) adds or removes curvature along R
+    directions, ``scalars`` (B, 2)
     are the log curvature-scale and log radius shifts."""
     return bobyqa_specific(
         state,

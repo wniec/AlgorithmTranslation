@@ -9,6 +9,7 @@ and grows its swarm, so it has no fixed-population state to translate.
 """
 
 from algorithm_translation.optimizers.DE import MADDE
+from algorithm_translation.optimizers.EDA import AMALGAM, UMDA
 from algorithm_translation.optimizers.ES import CMAES
 from algorithm_translation.optimizers.PSO import CPSO, IPSO, SPSO, SPSOL
 from algorithm_translation.optimizers.TR import BOBYQA
@@ -22,6 +23,8 @@ PORTFOLIO: dict = {
     "CMAES": CMAES,
     "MADDE": MADDE,
     "BOBYQA": BOBYQA,
+    "UMDA": UMDA,
+    "AMALGAM": AMALGAM,
 }
 
 

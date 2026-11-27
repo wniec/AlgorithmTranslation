@@ -25,13 +25,20 @@ variants `SPSO`/`SPSOL`/`CPSO` (per-particle velocities + personal bests),
 **CMA-ES** (mean + covariance + step-size + evolution paths), **MadDE** (Biswas
 et al., CEC 2021 — a self-adaptive DE whose translated field is its **external
 archive**, a variable-size *point-set*), and **BOBYQA** (a model-based trust
-region, translating its quadratic model's gradient/Hessian and its radius).
+region, translating its quadratic model's gradient/Hessian and its radius), and
+two estimation-of-distribution algorithms: **UMDA** (continuous UMDA_c with
+smoothed updates, translating its diagonal Gaussian: mean + per-coordinate std)
+and **AMALGAM** (AMaLGaM, Bosman et al. 2008/2013 — a full Gaussian whose
+covariance has memory, plus its anticipated mean shift and distribution
+multiplier `c_mult`). Plain UMDA_c has no memory (its distribution is a function
+of the last population, which is already shared), hence the smoothing.
 The archive is a distinct `POINT_SET` field type: the encoder pools it
 (set-equivariant), and the decoder regenerates it as `round(2.3·N)` points
 seeded from the carried population. Any pair can be translated. (`IPSO` is in
 the portfolio but not translatable: it restarts from one particle and grows.)
 
-CMA-ES's search distribution and BOBYQA's quadratic model are **computed**
+CMA-ES's search distribution, BOBYQA's quadratic model and the EDAs'
+distributions are **computed**
 rather than decoded from scratch (`algorithm_translation/models/prior/`):
 
 - CMA-ES: the mean is CMA-ES's own weighted recombination of the source's best
@@ -43,10 +50,17 @@ rather than decoded from scratch (`algorithm_translation/models/prior/`):
   the same whichever optimizer produced them; the radius is the population's
   mean per-coordinate std. A residual survives BOBYQA's own refit only in the
   part of the model the points leave open.
+- UMDA / AMALGAM: the distribution the EDA itself estimates from the
+  handed-over points (maximum likelihood over the best 30% / 35%), with
+  `ams_shift = 0` and `c_mult = 1`. Their residuals use two shift columns (mean
+  + per-coordinate log-std for UMDA, which can therefore narrow a single
+  coordinate; mean + anticipated mean shift for AMaLGaM).
 
-For both, the decoder head only predicts a residual around the computed state: a
-per-coordinate shift (mean / gradient), a low-rank PSD factor added to the
-matrix (`--cov-rank`) and two global log-scale shifts (step size and blend /
+For CMA-ES and BOBYQA, the decoder head only predicts a residual around the computed state: a
+per-coordinate shift (mean / gradient), a low-rank factor added to the
+matrix (`--cov-rank`; PSD `F Fᵀ` for the covariance, signed `F·diag(+1, −1, …)·Fᵀ`
+for the Hessian, which may be indefinite, so it needs rank ≥ 2 to remove
+curvature) and two global log-scale shifts (step size and blend /
 curvature scale and radius), i.e. `(1 + rank)·D + 2` numbers. A zero action
 reproduces the computed state.
 
@@ -123,7 +137,8 @@ Shared across both trainers:
     negative when it does worse.
   - `absolute` — no baseline (0): the translated run's own score.
   - `relative` — the hand-off available without a network: the computed warm
-    start into CMA-ES or BOBYQA (see above), the lossy default for other targets.
+    start into CMA-ES, BOBYQA, UMDA or AMALGAM (see above), the lossy default
+    for other targets.
   - `coldtarget` — the target optimizer run cold for the whole budget.
 
   A comma-separated list sums several modes (`mixed` = `noswitch,relative`).
@@ -184,9 +199,10 @@ Either checkpoint is consumed directly by `uv run eval`
 
 **Train/test scenario** (both trainers, `--scenario`): every run is either
 `lopo` (**leave-some-problems-out**, default: held-out BBOB *functions*, chosen
-by `--split easy|hard|random`) or `loio` (**leave-some-instances-out**: the same
-functions, `--functions` default all 24, trained on `--instances` and tested on
-held-out `--test-instances`). Envs only ever see the train problems; the split
+by `--split easy|hard|random`; instances are ignored, both sides use all 15
+unless `--instances` restricts them) or `loio` (**leave-some-instances-out**: the
+same functions, `--functions` default all 24, trained on `--instances`, default
+1-5 and 71-75, and tested on the held-out `--test-instances`, default 76-80). Envs only ever see the train problems; the split
 is stored in every checkpoint (`ckpt["split"]`), and `uv run eval` /
 `uv run eval-switch` default to that held-out set and always drop training
 problems.
@@ -221,7 +237,7 @@ Success = translated ≥ lossy on average.
 
 ```
 algorithm_translation/
-├── optimizers/      # vendored SubOptimizer base + PSO family, CMA-ES, MadDE, BOBYQA
+├── optimizers/      # vendored SubOptimizer base + PSO family, CMA-ES, MadDE, BOBYQA, EDAs
 ├── suite/           # IOH/BBOB problem loader + train/test splits
 ├── state/           # StateSpec schema + native<->canonical conversion, batching
 ├── models/          # norm, set-equivariant layers, encoder, heads, translator

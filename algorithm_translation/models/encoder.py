@@ -140,6 +140,6 @@ class StateEncoder(nn.Module):
         log_d = torch.full((B, 1), float(D), device=device).log1p()
         feats = [best_y_std, log_n, log_d]
         for f in self.scalar_fields:
-            s = ctx.normalize(state.specific[f.name], Struct.SCALAR, False).reshape(B, 1)
+            s = ctx.normalize_field(state.specific[f.name], f).reshape(B, 1)
             feats.append(s)
         return torch.cat(feats, dim=-1)
